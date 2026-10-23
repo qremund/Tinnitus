@@ -47,6 +47,8 @@ public enum Decibels {
 public enum SafetyLimits {
     /// Loudest any test sound may play, relative to a full-scale sine. Enforced inside the synth.
     public static let maxTestLevelDBFS = -12.0
+    /// Loudest the sleep sounds may play.
+    public static let maxSleepLevelDBFS = -10.0
     /// Quietest level offered by the hearing threshold step.
     public static let minTestLevelDBFS = -100.0
 }
