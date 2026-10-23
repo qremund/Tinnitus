@@ -44,3 +44,27 @@ extension TinnitusSoundType {
         }
     }
 }
+
+extension SleepSound {
+    var title: String {
+        switch self {
+        case .white: "White noise"
+        case .pink: "Pink noise"
+        case .brown: "Brown noise"
+        case .rain: "Rain"
+        case .ocean: "Ocean"
+        case .fan: "Fan"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .white: "waveform"
+        case .pink: "waveform.path"
+        case .brown: "water.waves"
+        case .rain: "cloud.rain"
+        case .ocean: "beach.umbrella"
+        case .fan: "fan"
+        }
+    }
+}
