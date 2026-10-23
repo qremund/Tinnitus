@@ -27,6 +27,9 @@ final class SleepPlayer {
     }
     var filterEnabled = true { didSet { submit(); updateNowPlaying() } }
 
+    /// Called before playback starts, so other players can stop.
+    @ObservationIgnored var onWillPlay: (() -> Void)?
+
     /// Fade length at the end of the sleep timer.
     static let fadeDuration: TimeInterval = 60
 
@@ -59,7 +62,6 @@ final class SleepPlayer {
         observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
             self?.rebuild()
         })
-        setUpRemoteCommands()
     }
 
     deinit {
@@ -79,10 +81,12 @@ final class SleepPlayer {
     }
 
     func play() {
+        onWillPlay?()
         prepare()
         guard renderState != nil else { return }
         isPlaying = true
         submit()
+        claimRemoteControls()
         updateNowPlaying()
     }
 
@@ -216,20 +220,12 @@ final class SleepPlayer {
 
     // MARK: Lock screen
 
-    private func setUpRemoteCommands() {
-        let commands = MPRemoteCommandCenter.shared()
-        commands.playCommand.addTarget { [weak self] _ in
-            self?.play()
-            return .success
-        }
-        commands.pauseCommand.addTarget { [weak self] _ in
-            self?.pause()
-            return .success
-        }
-        commands.togglePlayPauseCommand.addTarget { [weak self] _ in
-            self?.togglePlayback()
-            return .success
-        }
+    private func claimRemoteControls() {
+        RemoteControls.claim(
+            play: { [weak self] in self?.play() },
+            pause: { [weak self] in self?.pause() },
+            toggle: { [weak self] in self?.togglePlayback() }
+        )
     }
 
     private func updateNowPlaying() {
