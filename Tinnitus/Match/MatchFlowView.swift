@@ -10,24 +10,23 @@ struct MatchFlowView: View {
     @State private var savedMessage: String?
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let model {
-                    MatchStepView(model: model) { profile in
-                        store.add(profile)
-                        savedMessage = "Saved: \(Format.frequency(profile.centerFrequencyHz)), \(Format.bandwidth(profile.bandwidthOctaves))."
-                        self.model = MatchModel(audio: audio)
-                    }
-                } else {
-                    ProgressView()
+        Group {
+            if let model {
+                MatchStepView(model: model) { profile in
+                    store.add(profile)
+                    savedMessage = "Saved: \(Format.frequency(profile.centerFrequencyHz)), \(Format.bandwidth(profile.bandwidthOctaves))."
+                    self.model = MatchModel(audio: audio)
                 }
+            } else {
+                ProgressView()
             }
-            .navigationTitle("Match")
-            .alert("Profile saved", isPresented: Binding(get: { savedMessage != nil }, set: { if !$0 { savedMessage = nil } })) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(savedMessage ?? "")
-            }
+        }
+        .navigationTitle("Guided match")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert("Profile saved", isPresented: Binding(get: { savedMessage != nil }, set: { if !$0 { savedMessage = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(savedMessage ?? "")
         }
         .onAppear {
             // Sleep sounds and music would drown out the test tones.
