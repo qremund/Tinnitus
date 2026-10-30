@@ -86,7 +86,7 @@ struct MusicView: View {
             }
         }
         .onAppear(perform: syncNotch)
-        .onChange(of: store.current) { syncNotch() }
+        .onChange(of: store.ears) { syncNotch() }
         .onChange(of: notchWidthOctaves) { syncNotch() }
     }
 
@@ -103,11 +103,20 @@ struct MusicView: View {
     }
 
     private var notchFooter: String {
-        guard let profile = store.current else {
+        let pitches = store.ears.pitches
+        if pitches.isEmpty {
             return "No profile yet, so songs play unfiltered. Use the Match tab first."
         }
-        let edges = PitchMatching.notchEdges(centerHz: profile.centerFrequencyHz, widthOctaves: notchWidthOctaves)
-        return "Songs play with \(Format.frequency(edges.low)) to \(Format.frequency(edges.high)) removed. Each song takes a few seconds to prepare the first time."
+        let removed: String
+        if pitches.isSameInBothEars, let center = pitches.left {
+            removed = "Songs play with \(Format.notchRange(centerHz: center, widthOctaves: notchWidthOctaves)) removed in both ears."
+        } else {
+            func ear(_ name: String, _ center: Double?) -> String {
+                center.map { "\(name) ear: \(Format.notchRange(centerHz: $0, widthOctaves: notchWidthOctaves)) removed." } ?? "\(name) ear: unfiltered."
+            }
+            removed = "\(ear("Left", pitches.left)) \(ear("Right", pitches.right))"
+        }
+        return "\(removed) Each song takes a few seconds to prepare the first time."
     }
 
     private func openMusicLibrary() {
@@ -130,7 +139,7 @@ struct MusicView: View {
     }
 
     private func syncNotch() {
-        player.setNotch(centerHz: store.current?.centerFrequencyHz, widthOctaves: notchWidthOctaves)
+        player.setNotch(pitches: store.ears.pitches, widthOctaves: notchWidthOctaves)
     }
 }
 

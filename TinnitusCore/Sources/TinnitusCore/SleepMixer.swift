@@ -8,8 +8,9 @@ public final class SleepMixer {
         /// RMS level in dB relative to a full-scale sine, capped at `SafetyLimits.maxSleepLevelDBFS`.
         public var levelDBFS: Double
         public var isPlaying: Bool
-        /// Empty when there is no profile yet.
-        public var notch: [BiquadCoefficients]
+        /// Empty for an ear with no profile, which then plays unfiltered.
+        public var leftNotch: [BiquadCoefficients]
+        public var rightNotch: [BiquadCoefficients]
         public var filterEnabled: Bool
         /// Extra gain from 0 to 1, used by the sleep timer's fade-out.
         public var fadeGain: Double
@@ -18,19 +19,21 @@ public final class SleepMixer {
             sound: SleepSound = .pink,
             levelDBFS: Double = -30,
             isPlaying: Bool = false,
-            notch: [BiquadCoefficients] = [],
+            leftNotch: [BiquadCoefficients] = [],
+            rightNotch: [BiquadCoefficients] = [],
             filterEnabled: Bool = true,
             fadeGain: Double = 1
         ) {
             self.sound = sound
             self.levelDBFS = min(levelDBFS, SafetyLimits.maxSleepLevelDBFS)
             self.isPlaying = isPlaying
-            self.notch = notch
+            self.leftNotch = leftNotch
+            self.rightNotch = rightNotch
             self.filterEnabled = filterEnabled
             self.fadeGain = min(max(fadeGain, 0), 1)
         }
 
-        public var isFiltering: Bool { filterEnabled && !notch.isEmpty }
+        public var isFiltering: Bool { filterEnabled && !(leftNotch.isEmpty && rightNotch.isEmpty) }
     }
 
     public let sampleRate: Double
@@ -49,8 +52,8 @@ public final class SleepMixer {
         // Different seeds keep the two ears decorrelated, which sounds wider and calmer.
         leftSource = SleepSoundGenerator(sound: configuration.sound, sampleRate: sampleRate, seed: 0x1234_5678_9ABC_DEF1)
         rightSource = SleepSoundGenerator(sound: configuration.sound, sampleRate: sampleRate, seed: 0x0FED_CBA9_8765_4321)
-        leftNotch = BiquadCascade(configuration.notch)
-        rightNotch = BiquadCascade(configuration.notch)
+        leftNotch = BiquadCascade(configuration.leftNotch)
+        rightNotch = BiquadCascade(configuration.rightNotch)
         wet = configuration.isFiltering ? 1 : 0
         // About a 0.3 s glide for volume, start, stop, and filter on/off.
         smoothing = 1 - exp(-1 / (0.3 * sampleRate))
@@ -60,15 +63,16 @@ public final class SleepMixer {
         configuration = newConfiguration
         leftSource.sound = newConfiguration.sound
         rightSource.sound = newConfiguration.sound
-        leftNotch.setCoefficients(newConfiguration.notch)
-        rightNotch.setCoefficients(newConfiguration.notch)
+        leftNotch.setCoefficients(newConfiguration.leftNotch)
+        rightNotch.setCoefficients(newConfiguration.rightNotch)
     }
 
     public func render(left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>?, frameCount: Int) {
         let c = configuration
         let targetGain = c.isPlaying ? Decibels.amplitude(fromDB: c.levelDBFS) / 2.0.squareRoot() * c.fadeGain : 0
         let targetWet = c.isFiltering ? 1.0 : 0.0
-        let hasNotch = !c.notch.isEmpty
+        let hasLeftNotch = !c.leftNotch.isEmpty
+        let hasRightNotch = !c.rightNotch.isEmpty
 
         for i in 0..<frameCount {
             gain += (targetGain - gain) * smoothing
@@ -76,8 +80,8 @@ public final class SleepMixer {
             let dryLeft = leftSource.next()
             let dryRight = rightSource.next()
             // The notch always runs so turning it back on is seamless.
-            let notchedLeft = hasNotch ? leftNotch.process(dryLeft) : dryLeft
-            let notchedRight = hasNotch ? rightNotch.process(dryRight) : dryRight
+            let notchedLeft = hasLeftNotch ? leftNotch.process(dryLeft) : dryLeft
+            let notchedRight = hasRightNotch ? rightNotch.process(dryRight) : dryRight
             let outLeft = (dryLeft + (notchedLeft - dryLeft) * wet) * gain
             let outRight = (dryRight + (notchedRight - dryRight) * wet) * gain
             left[i] = Float(min(max(outLeft, -1), 1))

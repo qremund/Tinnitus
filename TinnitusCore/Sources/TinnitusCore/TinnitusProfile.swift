@@ -76,3 +76,58 @@ public struct TinnitusProfile: Codable, Identifiable, Equatable, Sendable {
         return sorted.count % 2 == 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
     }
 }
+
+/// The profile that sets the notch in each ear. A side with no profile plays unfiltered.
+public struct EarProfiles: Equatable, Sendable {
+    public var left: TinnitusProfile?
+    public var right: TinnitusProfile?
+
+    public init(left: TinnitusProfile?, right: TinnitusProfile?) {
+        self.left = left
+        self.right = right
+    }
+
+    /// Notch centers for each ear.
+    public var pitches: EarPitches {
+        EarPitches(left: left?.centerFrequencyHz, right: right?.centerFrequencyHz)
+    }
+
+    public var isEmpty: Bool { left == nil && right == nil }
+
+    /// Builds each ear's profile from the newest `sessions` matches that apply to it. Left and right
+    /// matches count for their own ear and "both" matches count for both. With `sameForBothEars`,
+    /// every match counts for both ears and the two sides get the same profile.
+    public static func from(_ profiles: [TinnitusProfile], sameForBothEars: Bool, sessions: Int = 3) -> EarProfiles {
+        let newestFirst = profiles.sorted { $0.date > $1.date }
+        if sameForBothEars {
+            let shared = TinnitusProfile.consensus(of: Array(newestFirst.prefix(sessions)))
+            return EarProfiles(left: shared, right: shared)
+        }
+        func side(_ ear: Ear) -> TinnitusProfile? {
+            TinnitusProfile.consensus(of: Array(newestFirst.filter { $0.ear == ear || $0.ear == .both }.prefix(sessions)))
+        }
+        return EarProfiles(left: side(.left), right: side(.right))
+    }
+}
+
+/// Notch center for each ear in Hz. nil leaves that ear unfiltered.
+public struct EarPitches: Equatable, Hashable, Sendable {
+    public var left: Double?
+    public var right: Double?
+
+    public init(left: Double?, right: Double?) {
+        self.left = left
+        self.right = right
+    }
+
+    public static let none = EarPitches(left: nil, right: nil)
+
+    public var isEmpty: Bool { left == nil && right == nil }
+    public var isSameInBothEars: Bool { left == right }
+
+    /// Band-stop coefficients for one side, empty when that side is unfiltered.
+    public func notch(for ear: Ear, widthOctaves: Double, sampleRate: Double) -> [BiquadCoefficients] {
+        let center = ear == .right ? right : left
+        return center.map { NotchDesign.forTinnitus(centerHz: $0, widthOctaves: widthOctaves, sampleRate: sampleRate) } ?? []
+    }
+}

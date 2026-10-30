@@ -73,21 +73,29 @@ struct PlayView: View {
             .navigationTitle("Play")
         }
         .onAppear(perform: syncNotch)
-        .onChange(of: store.current) { syncNotch() }
+        .onChange(of: store.ears) { syncNotch() }
         .onChange(of: notchWidthOctaves) { syncNotch() }
     }
 
     @ViewBuilder
     private var notchSummary: some View {
-        if let profile = store.current {
-            let edges = PitchMatching.notchEdges(centerHz: profile.centerFrequencyHz, widthOctaves: notchWidthOctaves)
+        let pitches = store.ears.pitches
+        if !pitches.isEmpty {
             Label {
                 VStack(alignment: .leading) {
-                    Text(player.filterEnabled ? "Removing \(Format.frequency(edges.low)) to \(Format.frequency(edges.high))" : "Notch off (A/B comparison)")
-                        .font(.headline)
-                    Text("Centered on your \(Format.frequency(profile.centerFrequencyHz)) match")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                    if pitches.isSameInBothEars, let center = pitches.left {
+                        Text(player.filterEnabled ? "Removing \(Format.notchRange(centerHz: center, widthOctaves: notchWidthOctaves))" : "Notch off (A/B comparison)")
+                            .font(.headline)
+                        Text("Both ears, centered on your \(Format.frequency(center)) match")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text(player.filterEnabled ? "A separate notch in each ear" : "Notch off (A/B comparison)")
+                            .font(.headline)
+                        Text("Left: \(Format.earNotch(pitches.left, widthOctaves: notchWidthOctaves))\nRight: \(Format.earNotch(pitches.right, widthOctaves: notchWidthOctaves))")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             } icon: {
                 Image(systemName: player.filterEnabled ? "waveform.badge.minus" : "waveform")
@@ -127,6 +135,6 @@ struct PlayView: View {
     }
 
     private func syncNotch() {
-        player.setNotch(centerHz: store.current?.centerFrequencyHz, widthOctaves: notchWidthOctaves)
+        player.setNotch(pitches: store.ears.pitches, widthOctaves: notchWidthOctaves)
     }
 }
