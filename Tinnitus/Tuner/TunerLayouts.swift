@@ -92,15 +92,19 @@ struct PadLayout: View {
 
             GeometryReader { geometry in
                 let size = geometry.size
-                let x = model.pitchPosition * size.width
-                let y = (1 - model.widthPosition) * size.height
+                // Keep the dot fully inside the pad at the extremes.
+                let inset: CGFloat = 18
+                let usableWidth = size.width - 2 * inset
+                let usableHeight = size.height - 2 * inset - 20
+                let x = inset + model.pitchPosition * usableWidth
+                let y = inset + (1 - model.widthPosition) * usableHeight
                 ZStack(alignment: .topLeading) {
                     RoundedRectangle(cornerRadius: 16).fill(Color(.secondarySystemBackground))
                     Canvas { context, canvasSize in
                         // One line per octave from 500 Hz to 8 kHz.
                         for hz in [500.0, 1000, 2000, 4000, 8000] {
-                            let lineX = TunerMath.pitchPosition(hz) * canvasSize.width
-                            context.stroke(Path { $0.move(to: CGPoint(x: lineX, y: 0)); $0.addLine(to: CGPoint(x: lineX, y: canvasSize.height)) }, with: .color(.secondary.opacity(0.25)))
+                            let lineX = inset + TunerMath.pitchPosition(hz) * usableWidth
+                            context.stroke(Path { $0.move(to: CGPoint(x: lineX, y: 0)); $0.addLine(to: CGPoint(x: lineX, y: canvasSize.height - 20)) }, with: .color(.secondary.opacity(0.25)))
                         }
                         context.stroke(Path { $0.move(to: CGPoint(x: x, y: 0)); $0.addLine(to: CGPoint(x: x, y: canvasSize.height)) }, with: .color(.accentColor.opacity(0.4)), lineWidth: 2)
                         context.stroke(Path { $0.move(to: CGPoint(x: 0, y: y)); $0.addLine(to: CGPoint(x: canvasSize.width, y: y)) }, with: .color(.accentColor.opacity(0.4)), lineWidth: 2)
@@ -111,22 +115,15 @@ struct PadLayout: View {
                         .frame(width: 30, height: 30)
                         .position(x: x, y: y)
                     Text("Broad hiss").font(.caption).foregroundStyle(.secondary).padding(10)
-                    Text("Pure tone").font(.caption).foregroundStyle(.secondary).padding(10)
+                    Text("Pure tone").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.bottom, 24)
                         .frame(maxHeight: .infinity, alignment: .bottom)
-                    HStack {
-                        ForEach(["500", "1k", "2k", "4k", "8k"], id: \.self) { Text($0) }
-                            .frame(maxWidth: .infinity)
-                    }
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.bottom, 26)
-                    .frame(maxHeight: .infinity, alignment: .bottom)
-                    .allowsHitTesting(false)
+                    PitchAxisLabels(width: usableWidth)
+                        .offset(x: inset, y: size.height - 22)
                 }
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                    model.pitchPosition = value.location.x / size.width
-                    model.widthPosition = 1 - value.location.y / size.height
+                    model.pitchPosition = (value.location.x - inset) / usableWidth
+                    model.widthPosition = 1 - (value.location.y - inset) / usableHeight
                 })
                 .modifier(PitchAccessibility(model: model))
             }
@@ -172,6 +169,8 @@ struct BandLayout: View {
                 let centerX = model.pitchPosition * size.width
                 let halfWidth = max(model.bandwidthOctaves / 2 / 6 * size.width, 4)
                 let top = (1 - model.levelPosition) * plotHeight
+                // The width handles stay a finger's width apart even for a pure tone.
+                let handleOffset = max(halfWidth, 24)
                 ZStack(alignment: .topLeading) {
                     RoundedRectangle(cornerRadius: 16).fill(Color(.secondarySystemBackground))
                     Canvas { context, canvasSize in
@@ -210,25 +209,18 @@ struct BandLayout: View {
                     ForEach([-1.0, 1.0], id: \.self) { side in
                         Circle().fill(Color(.systemBackground)).overlay(Circle().stroke(.primary, lineWidth: 2))
                             .frame(width: 18, height: 18)
-                            .position(x: centerX + side * halfWidth, y: (top + plotHeight) / 2)
+                            .position(x: centerX + side * handleOffset, y: (top + plotHeight) / 2)
                     }
-                    HStack {
-                        ForEach(["500", "1k", "2k", "4k", "8k"], id: \.self) { Text($0) }
-                            .frame(maxWidth: .infinity)
-                    }
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .frame(height: 24)
-                    .offset(y: plotHeight)
-                    .allowsHitTesting(false)
+                    PitchAxisLabels(width: size.width)
+                        .offset(y: plotHeight + 2)
                 }
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0)
                     .onChanged { value in
                         if dragMode == nil {
                             // Grabbing near an edge handle adjusts width; anywhere else moves the band.
-                            let distance = abs(abs(value.startLocation.x - centerX) - halfWidth)
-                            let nearEdge = distance < 22 && abs(value.startLocation.x - centerX) > 10
+                            let distance = abs(abs(value.startLocation.x - centerX) - handleOffset)
+                            let nearEdge = distance < 22 && abs(value.startLocation.x - centerX) > 12
                             dragMode = nearEdge ? .width : .move(startPitch: model.pitchPosition, startLevel: model.levelPosition)
                         }
                         switch dragMode {
@@ -236,7 +228,9 @@ struct BandLayout: View {
                             model.pitchPosition = startPitch + value.translation.width / size.width
                             model.levelPosition = startLevel - value.translation.height / plotHeight
                         case .width?:
-                            let octaves = abs(value.location.x - centerX) / size.width * 6 * 2
+                            // Measured from the handle's resting spot, so a narrow band widens smoothly from where you grabbed it.
+                            let pulled = max(abs(value.location.x - centerX) - (handleOffset - halfWidth), 0)
+                            let octaves = pulled / size.width * 6 * 2
                             model.widthPosition = octaves < 1.0 / 48 ? 0 : PitchMatching.sliderPosition(bandwidthOctaves: min(octaves, 1))
                         case nil:
                             break

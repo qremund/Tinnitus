@@ -42,6 +42,8 @@ struct PitchNudgeRow: View {
         Button(action: action) {
             Text(title)
                 .font(.callout.weight(.medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.bordered)
@@ -100,5 +102,23 @@ struct PitchAccessibility: ViewModifier {
                 @unknown default: break
                 }
             }
+    }
+}
+
+/// Octave labels placed under their gridlines on the tuner's log pitch axis.
+struct PitchAxisLabels: View {
+    let width: CGFloat
+
+    var body: some View {
+        ZStack {
+            ForEach([500.0, 1000, 2000, 4000, 8000], id: \.self) { hz in
+                Text(hz >= 1000 ? "\(Int(hz / 1000))k" : "\(Int(hz))")
+                    .position(x: TunerMath.pitchPosition(hz) * width, y: 10)
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .frame(width: width, height: 20)
+        .allowsHitTesting(false)
     }
 }

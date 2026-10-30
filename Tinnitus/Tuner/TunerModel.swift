@@ -19,12 +19,8 @@ final class TunerModel {
     /// 0...1, mapped to bandwidth by `PitchMatching.bandwidth(sliderPosition:)`. 0 is a pure tone.
     var widthPosition = PitchMatching.sliderPosition(bandwidthOctaves: 1.0 / 8) { didSet { updateSound() } }
     var levelDBFS = -50.0 { didSet { updateSound() } }
-    var ear: Ear = .both {
-        didSet {
-            guard ear != oldValue else { return }
-            loadSaved(for: ear)
-        }
-    }
+    /// Changing the ear keeps the current tuning, so a match can be carried over and checked in the other ear.
+    var ear: Ear = .both { didSet { updateSound() } }
     var isSoundOn = true { didSet { updateSound() } }
     /// The property the dial layout is adjusting.
     var selected: Property = .pitch
