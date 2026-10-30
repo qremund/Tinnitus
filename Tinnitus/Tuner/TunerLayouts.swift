@@ -209,11 +209,12 @@ struct BandLayout: View {
                     ForEach([-1.0, 1.0], id: \.self) { side in
                         Circle().fill(Color(.systemBackground)).overlay(Circle().stroke(.primary, lineWidth: 2))
                             .frame(width: 18, height: 18)
-                            .position(x: centerX + side * handleOffset, y: (top + plotHeight) / 2)
+                            .position(x: min(max(centerX + side * handleOffset, 12), size.width - 12), y: (top + plotHeight) / 2)
                     }
                     PitchAxisLabels(width: size.width)
                         .offset(y: plotHeight + 2)
                 }
+                .clipShape(RoundedRectangle(cornerRadius: 16))
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0)
                     .onChanged { value in
