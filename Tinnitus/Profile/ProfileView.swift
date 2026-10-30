@@ -6,24 +6,24 @@ struct ProfileView: View {
     @AppStorage("notchWidthOctaves") private var notchWidthOctaves = 1.0
 
     var body: some View {
+        @Bindable var store = store
         NavigationStack {
             List {
-                if let profile = store.current {
+                let ears = store.ears
+                if !ears.isEmpty {
                     Section {
-                        LabeledContent("Pitch", value: Format.frequency(profile.centerFrequencyHz))
-                        LabeledContent("Width", value: Format.bandwidth(profile.bandwidthOctaves))
-                        LabeledContent("Loudness", value: "\(Format.level(profile.sensationLevelDB)) above threshold")
-                        LabeledContent("Ear", value: profile.ear.title)
-                    } header: {
-                        Text("Your tinnitus")
+                        Toggle("Same notch in both ears", isOn: $store.sameForBothEars)
                     } footer: {
-                        Text(store.profiles.count > 1 ? "Median of your last \(min(store.profiles.count, 3)) sessions." : "From one session. Match again on another day for a steadier result.")
+                        Text(store.sameForBothEars
+                             ? "Both ears use the median of your last three sessions, whichever ear they were for."
+                             : "Each ear uses its own sessions. Sessions for both ears count toward each side.")
                     }
 
-                    Section("Notch filter") {
-                        let edges = PitchMatching.notchEdges(centerHz: profile.centerFrequencyHz, widthOctaves: notchWidthOctaves)
-                        LabeledContent("Removes", value: "\(Format.frequency(edges.low)) to \(Format.frequency(edges.high))")
-                        LabeledContent("Width", value: Format.bandwidth(notchWidthOctaves))
+                    if store.sameForBothEars || ears.left == ears.right {
+                        earSection("Both ears", ears.left)
+                    } else {
+                        earSection("Left ear", ears.left)
+                        earSection("Right ear", ears.right)
                     }
                 } else {
                     ContentUnavailableView(
@@ -38,7 +38,7 @@ struct ProfileView: View {
                         ForEach(store.profiles) { profile in
                             VStack(alignment: .leading) {
                                 Text(profile.date, format: .dateTime.month().day().hour().minute())
-                                Text("\(Format.frequency(profile.centerFrequencyHz)), \(Format.bandwidth(profile.bandwidthOctaves)), \(Format.level(profile.sensationLevelDB)) above threshold")
+                                Text("\(profile.ear.shortTitle): \(Format.frequency(profile.centerFrequencyHz)), \(Format.bandwidth(profile.bandwidthOctaves)), \(Format.level(profile.sensationLevelDB)) above threshold")
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
                                 if !profile.notes.isEmpty {
@@ -51,6 +51,24 @@ struct ProfileView: View {
                 }
             }
             .navigationTitle("Profile")
+        }
+    }
+
+    @ViewBuilder
+    private func earSection(_ title: String, _ profile: TinnitusProfile?) -> some View {
+        Section(title) {
+            if let profile {
+                LabeledContent("Pitch", value: Format.frequency(profile.centerFrequencyHz))
+                LabeledContent("Width", value: Format.bandwidth(profile.bandwidthOctaves))
+                LabeledContent("Loudness", value: "\(Format.level(profile.sensationLevelDB)) above threshold")
+                LabeledContent("Notch removes", value: Format.notchRange(centerHz: profile.centerFrequencyHz, widthOctaves: notchWidthOctaves))
+                if profile.notes.hasPrefix("Median") {
+                    Text(profile.notes).font(.caption).foregroundStyle(.secondary)
+                }
+            } else {
+                Text("No sessions for this ear yet, so it plays unfiltered. Match it in the Match tab.")
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }

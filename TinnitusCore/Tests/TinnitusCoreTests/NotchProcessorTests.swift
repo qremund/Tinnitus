@@ -49,6 +49,30 @@ final class NotchProcessorTests: XCTestCase {
         XCTAssertNotEqual(left[1], 0)
     }
 
+    func testEachEarGetsItsOwnNotch() {
+        let pitches = EarPitches(left: 3000, right: 6000)
+        var processor = NotchProcessor.forTinnitus(pitches: pitches, widthOctaves: 1, sampleRate: sampleRate, channelCount: 2)
+        let total = Int(sampleRate)
+        var left = (0..<total).map { Float(sin(2 * Double.pi * 3000 * Double($0) / sampleRate)) }
+        var right = left
+        left.withUnsafeMutableBufferPointer { processor.process($0.baseAddress!, frameCount: total, channel: 0) }
+        right.withUnsafeMutableBufferPointer { processor.process($0.baseAddress!, frameCount: total, channel: 1) }
+        func rms(_ x: [Float]) -> Double {
+            let tail = x[(total / 2)...]
+            return (tail.reduce(0) { $0 + Double($1) * Double($1) } / Double(tail.count)).squareRoot()
+        }
+        // 3 kHz sits in the left notch but well below the right one (4.2 to 8.5 kHz).
+        XCTAssertLessThan(rms(left), 0.001)
+        XCTAssertGreaterThan(rms(right), 0.6)
+    }
+
+    func testEarWithoutPitchPassesThrough() {
+        var processor = NotchProcessor.forTinnitus(pitches: EarPitches(left: 3000, right: nil), widthOctaves: 1, sampleRate: sampleRate, channelCount: 2)
+        var samples: [Float] = [0.5, -0.25, 1]
+        samples.withUnsafeMutableBufferPointer { processor.process($0.baseAddress!, frameCount: 3, channel: 1) }
+        XCTAssertEqual(samples, [0.5, -0.25, 1])
+    }
+
     func testEmptyNotchPassesThrough() {
         var processor = NotchProcessor(channelCount: 1, coefficients: [])
         var samples: [Float] = [0.5, -0.25, 1]

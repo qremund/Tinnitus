@@ -14,9 +14,14 @@ final class ProfileStore {
         load()
     }
 
-    /// Median of the last three sessions, which is steadier than any single match.
-    var current: TinnitusProfile? {
-        TinnitusProfile.consensus(of: Array(profiles.prefix(3)))
+    /// Use one notch for both ears, from the newest matches of any ear.
+    var sameForBothEars = UserDefaults.standard.bool(forKey: "sameNotchBothEars") {
+        didSet { UserDefaults.standard.set(sameForBothEars, forKey: "sameNotchBothEars") }
+    }
+
+    /// Each ear's profile: the median of its last three applicable sessions, which is steadier than any single match.
+    var ears: EarProfiles {
+        EarProfiles.from(profiles, sameForBothEars: sameForBothEars)
     }
 
     func add(_ profile: TinnitusProfile) {
