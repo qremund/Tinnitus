@@ -15,6 +15,7 @@ struct PlayView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     notchSummary
+                    ProfilePicker()
 
                     LazyVGrid(columns: columns, spacing: 12) {
                         ForEach(SleepSound.allCases, id: \.self) { sound in
@@ -83,10 +84,10 @@ struct PlayView: View {
         if !pitches.isEmpty {
             Label {
                 VStack(alignment: .leading) {
-                    if pitches.isSameInBothEars, let center = pitches.left {
-                        Text(player.filterEnabled ? "Removing \(Format.notchRange(centerHz: center, widthOctaves: notchWidthOctaves))" : "Notch off (A/B comparison)")
+                    if pitches.isSameInBothEars {
+                        Text(player.filterEnabled ? "Removing \(Format.earNotch(pitches.left, widthOctaves: notchWidthOctaves))" : "Notch off (A/B comparison)")
                             .font(.headline)
-                        Text("Both ears, centered on your \(Format.frequency(center)) match")
+                        Text("Both ears, centered on your \(Format.pitches(pitches.left)) match\(pitches.left.count == 1 ? "" : "es")")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     } else {
@@ -101,7 +102,8 @@ struct PlayView: View {
                 Image(systemName: player.filterEnabled ? "waveform.badge.minus" : "waveform")
             }
         } else {
-            Label("No profile yet, so sounds play unfiltered. Use the Match tab first.", systemImage: "exclamationmark.circle")
+            Label(store.activeProfile.map { "\($0.name) has no matches yet, so sounds play unfiltered. Add matches on the Profile tab." }
+                  ?? "No matches yet, so sounds play unfiltered. Use the Match tab first.", systemImage: "exclamationmark.circle")
                 .foregroundStyle(.secondary)
         }
     }

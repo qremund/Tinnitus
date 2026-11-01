@@ -23,6 +23,22 @@ final class ToneSynthTests: XCTestCase {
         return (rms(left), rms(right))
     }
 
+    func testStoppedSynthFadesToSilent() {
+        let playing = TestSoundParameters(frequencyHz: 1000, kind: .tone, levelDBFS: -20, ear: .both, isPlaying: true)
+        let synth = ToneSynth(sampleRate: sampleRate, configuration: ToneSynth.configuration(for: playing, sampleRate: sampleRate))
+        let count = Int(sampleRate / 2)
+        let left = UnsafeMutablePointer<Float>.allocate(capacity: count)
+        defer { left.deallocate() }
+        synth.render(left: left, right: nil, frameCount: count)
+        XCTAssertFalse(synth.isSilent)
+        var stopped = playing
+        stopped.isPlaying = false
+        synth.apply(ToneSynth.configuration(for: stopped, sampleRate: sampleRate))
+        XCTAssertFalse(synth.isSilent)
+        synth.render(left: left, right: nil, frameCount: count)
+        XCTAssertTrue(synth.isSilent)
+    }
+
     func testToneLevelMatchesDBFS() {
         let rms = renderRMS(TestSoundParameters(frequencyHz: 1000, kind: .tone, levelDBFS: -20, ear: .both, isPlaying: true))
         // A -20 dBFS sine has peak 0.1 and RMS 0.1 / sqrt(2).

@@ -22,9 +22,27 @@ enum Format {
         return "\(frequency(edges.low)) to \(frequency(edges.high))"
     }
 
-    /// One ear's notch for summaries, or "unfiltered" when that ear has no match.
-    static func earNotch(_ centerHz: Double?, widthOctaves: Double) -> String {
-        centerHz.map { notchRange(centerHz: $0, widthOctaves: widthOctaves) } ?? "unfiltered"
+    /// One ear's notches for summaries, like "2.12 kHz to 4.24 kHz and 5.66 kHz to 6.73 kHz",
+    /// with overlapping notches merged. "unfiltered" when that ear has no match.
+    static func earNotch(_ centersHz: [Double], widthOctaves: Double) -> String {
+        let bands = NotchDesign.bands(centersHz: centersHz, widthOctaves: widthOctaves)
+        guard !bands.isEmpty else { return "unfiltered" }
+        return bands.map { "\(frequency($0.low)) to \(frequency($0.high))" }.formatted(.list(type: .and))
+    }
+
+    /// Pitches as a short list, like "3.10 kHz and 6.20 kHz".
+    static func pitches(_ centersHz: [Double]) -> String {
+        centersHz.map(frequency).formatted(.list(type: .and))
+    }
+
+    /// A saved match's name, or its date when it has none.
+    static func matchTitle(_ profile: TinnitusProfile) -> String {
+        profile.name ?? profile.date.formatted(.dateTime.month().day().hour().minute())
+    }
+
+    /// One line describing a saved match.
+    static func matchSummary(_ profile: TinnitusProfile) -> String {
+        "\(profile.ear.shortTitle) · \(frequency(profile.centerFrequencyHz)) · \(bandwidth(profile.bandwidthOctaves))"
     }
 
     /// Minutes and seconds, like 3:07.

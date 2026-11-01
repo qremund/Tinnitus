@@ -15,6 +15,11 @@ struct MusicView: View {
     var body: some View {
         NavigationStack {
             List {
+                if !store.profiles.isEmpty {
+                    Section("Notch") {
+                        ProfilePicker()
+                    }
+                }
                 if library.tracks.isEmpty {
                     emptyState
                 } else {
@@ -105,14 +110,15 @@ struct MusicView: View {
     private var notchFooter: String {
         let pitches = store.ears.pitches
         if pitches.isEmpty {
-            return "No profile yet, so songs play unfiltered. Use the Match tab first."
+            return store.activeProfile.map { "\($0.name) has no matches yet, so songs play unfiltered." }
+                ?? "No matches yet, so songs play unfiltered. Use the Match tab first."
         }
         let removed: String
-        if pitches.isSameInBothEars, let center = pitches.left {
-            removed = "Songs play with \(Format.notchRange(centerHz: center, widthOctaves: notchWidthOctaves)) removed in both ears."
+        if pitches.isSameInBothEars {
+            removed = "Songs play with \(Format.earNotch(pitches.left, widthOctaves: notchWidthOctaves)) removed in both ears."
         } else {
-            func ear(_ name: String, _ center: Double?) -> String {
-                center.map { "\(name) ear: \(Format.notchRange(centerHz: $0, widthOctaves: notchWidthOctaves)) removed." } ?? "\(name) ear: unfiltered."
+            func ear(_ name: String, _ centers: [Double]) -> String {
+                centers.isEmpty ? "\(name) ear: unfiltered." : "\(name) ear: \(Format.earNotch(centers, widthOctaves: notchWidthOctaves)) removed."
             }
             removed = "\(ear("Left", pitches.left)) \(ear("Right", pitches.right))"
         }

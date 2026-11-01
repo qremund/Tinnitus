@@ -32,7 +32,7 @@ struct ContentView: View {
                 .tabItem { Label("Play", systemImage: "play.circle") }
             MusicView()
                 .tabItem { Label("Music", systemImage: "music.note") }
-            MatchFlowView()
+            MatchHomeView()
                 .tabItem { Label("Match", systemImage: "waveform.badge.magnifyingglass") }
             ProfileView()
                 .tabItem { Label("Profile", systemImage: "person.crop.circle") }
