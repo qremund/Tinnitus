@@ -29,6 +29,8 @@ public struct TinnitusProfile: Codable, Identifiable, Equatable, Sendable {
     public var matchLevelDBFS: Double
     public var coarseRatings: [FrequencyRating]
     public var notes: String
+    /// Optional name the user gave this match. Older saved matches have none.
+    public var name: String?
 
     public init(
         id: UUID = UUID(),
@@ -40,7 +42,8 @@ public struct TinnitusProfile: Codable, Identifiable, Equatable, Sendable {
         thresholdDBFS: Double,
         matchLevelDBFS: Double,
         coarseRatings: [FrequencyRating] = [],
-        notes: String = ""
+        notes: String = "",
+        name: String? = nil
     ) {
         self.id = id
         self.date = date
@@ -52,6 +55,7 @@ public struct TinnitusProfile: Codable, Identifiable, Equatable, Sendable {
         self.matchLevelDBFS = matchLevelDBFS
         self.coarseRatings = coarseRatings
         self.notes = notes
+        self.name = name
     }
 
     /// Loudness above your own hearing threshold at that pitch.
@@ -67,6 +71,7 @@ public struct TinnitusProfile: Codable, Identifiable, Equatable, Sendable {
         result.thresholdDBFS = median(profiles.map(\.thresholdDBFS))
         result.matchLevelDBFS = median(profiles.map(\.matchLevelDBFS))
         result.notes = "Median of \(profiles.count) sessions"
+        result.name = nil
         return result
     }
 
@@ -107,6 +112,25 @@ public struct EarProfiles: Equatable, Sendable {
             TinnitusProfile.consensus(of: Array(newestFirst.filter { $0.ear == ear || $0.ear == .both }.prefix(sessions)))
         }
         return EarProfiles(left: side(.left), right: side(.right))
+    }
+
+    /// Like `from`, but an ear with a chosen match uses exactly that match instead of the recent median.
+    /// A chosen id that no longer exists falls back to the median.
+    public static func resolve(
+        _ profiles: [TinnitusProfile],
+        sameForBothEars: Bool,
+        leftChoice: UUID?,
+        rightChoice: UUID?,
+        sessions: Int = 3
+    ) -> EarProfiles {
+        var result = from(profiles, sameForBothEars: sameForBothEars, sessions: sessions)
+        if let id = leftChoice, let chosen = profiles.first(where: { $0.id == id }) {
+            result.left = chosen
+        }
+        if let id = rightChoice, let chosen = profiles.first(where: { $0.id == id }) {
+            result.right = chosen
+        }
+        return result
     }
 }
 

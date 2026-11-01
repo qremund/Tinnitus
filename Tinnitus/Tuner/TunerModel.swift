@@ -65,6 +65,17 @@ final class TunerModel {
         pitchHz = TunerMath.clampPitch(up ? pitchHz * 2 : pitchHz / 2)
     }
 
+    /// Halves or doubles the width in octaves. Narrower than 1/32 octave becomes a pure tone; wider than a tone starts at 1/32.
+    func scaleWidth(by factor: Double) {
+        let width = bandwidthOctaves
+        if width <= 0 {
+            if factor > 1 { widthPosition = PitchMatching.sliderPosition(bandwidthOctaves: 1.0 / 32) }
+            return
+        }
+        let scaled = width * factor
+        widthPosition = scaled < 1.0 / 32 - 1e-9 ? 0 : PitchMatching.sliderPosition(bandwidthOctaves: min(scaled, 1))
+    }
+
     func nudgeWidth(by step: Double) {
         widthPosition = min(max(widthPosition + step, 0), 1)
     }
@@ -103,6 +114,11 @@ final class TunerModel {
 
     // MARK: Accepting
 
+    func beginThreshold(defaultName: String) {
+        if matchName.isEmpty { matchName = defaultName }
+        beginThreshold()
+    }
+
     func beginThreshold() {
         thresholdDBFS = max(min(knownThresholdDBFS ?? levelDBFS - 15, levelDBFS), SafetyLimits.minTestLevelDBFS)
         phase = .threshold
@@ -115,6 +131,9 @@ final class TunerModel {
         updateSound()
     }
 
+    /// Name for the match being saved.
+    var matchName = ""
+
     func makeProfile() -> TinnitusProfile {
         TinnitusProfile(
             ear: ear,
@@ -123,13 +142,15 @@ final class TunerModel {
             bandwidthOctaves: bandwidthOctaves,
             thresholdDBFS: thresholdDBFS,
             matchLevelDBFS: levelDBFS,
-            notes: "Quick tune"
+            notes: "Quick tune",
+            name: matchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : matchName.trimmingCharacters(in: .whitespacesAndNewlines)
         )
     }
 
     /// Back to tuning after a save, with the new result as the starting point.
     func didSave(_ profiles: EarProfiles) {
         saved = profiles
+        matchName = ""
         phase = .tuning
         updateSound()
     }

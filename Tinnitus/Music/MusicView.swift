@@ -15,6 +15,11 @@ struct MusicView: View {
     var body: some View {
         NavigationStack {
             List {
+                if !store.profiles.isEmpty {
+                    Section("Notch") {
+                        MatchChooser()
+                    }
+                }
                 if library.tracks.isEmpty {
                     emptyState
                 } else {

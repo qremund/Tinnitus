@@ -9,10 +9,28 @@ enum TunerLayout: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .sliders: "A. Four sliders"
-        case .pad: "B. Pitch and width pad"
-        case .band: "C. Drag the band"
-        case .dial: "D. Tiles and one dial"
+        case .sliders: "Four sliders"
+        case .pad: "Pitch and width pad"
+        case .band: "Drag the band"
+        case .dial: "Tiles and one dial"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .sliders: "Everything at once"
+        case .pad: "One drag for pitch and width"
+        case .band: "See the shape you match"
+        case .dial: "Most precise"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .sliders: "slider.horizontal.3"
+        case .pad: "scope"
+        case .band: "waveform.path"
+        case .dial: "dial.medium"
         }
     }
 }
@@ -23,7 +41,7 @@ struct TunerView: View {
     @Environment(ProfileStore.self) private var store
     @Environment(SleepPlayer.self) private var player
     @Environment(MusicPlayer.self) private var music
-    @AppStorage("tunerLayout") private var layout = TunerLayout.sliders
+    let layout: TunerLayout
     @State private var model: TunerModel?
     @State private var savedMessage: String?
 
@@ -35,21 +53,8 @@ struct TunerView: View {
                 ProgressView()
             }
         }
-        .navigationTitle("Quick tune")
+        .navigationTitle(layout.title)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Picker("Tuner layout", selection: $layout) {
-                        ForEach(TunerLayout.allCases) { option in
-                            Text(option.title).tag(option)
-                        }
-                    }
-                } label: {
-                    Label("Choose tuner layout", systemImage: "square.grid.2x2")
-                }
-            }
-        }
         .alert("Profile saved", isPresented: Binding(get: { savedMessage != nil }, set: { if !$0 { savedMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -89,7 +94,7 @@ struct TunerView: View {
                 DialLayout(model: model)
             }
             Spacer(minLength: 0)
-            TunerBottomBar(model: model)
+            TunerBottomBar(model: model, defaultName: store.nextMatchName)
         }
         .padding(.horizontal)
         .padding(.bottom, 8)
@@ -101,7 +106,7 @@ struct TunerView: View {
                 let profile = model.makeProfile()
                 store.add(profile)
                 model.didSave(store.ears)
-                savedMessage = "Saved for \(profile.ear == .both ? "both ears" : "your \(profile.ear.shortTitle.lowercased()) ear"): \(Format.frequency(profile.centerFrequencyHz)), \(Format.bandwidth(profile.bandwidthOctaves)), \(Format.level(profile.sensationLevelDB)) above threshold."
+                savedMessage = "\(Format.matchTitle(profile)) saved for \(profile.ear == .both ? "both ears" : "your \(profile.ear.shortTitle.lowercased()) ear"): \(Format.frequency(profile.centerFrequencyHz)), \(Format.bandwidth(profile.bandwidthOctaves)), \(Format.level(profile.sensationLevelDB)) above threshold."
             }
             .presentationDetents([.medium])
         }
@@ -110,6 +115,7 @@ struct TunerView: View {
 
 private struct TunerBottomBar: View {
     @Bindable var model: TunerModel
+    let defaultName: String
 
     var body: some View {
         HStack(spacing: 10) {
@@ -122,8 +128,10 @@ private struct TunerBottomBar: View {
             .buttonStyle(.bordered)
             .accessibilityLabel(model.isSoundOn ? "Pause test sound" : "Play test sound")
 
-            Button(action: model.beginThreshold) {
-                Text("Accept match")
+            Button {
+                model.beginThreshold(defaultName: defaultName)
+            } label: {
+                Text("Save Match")
                     .font(.headline)
                     .frame(maxWidth: .infinity, minHeight: 52)
             }
@@ -140,7 +148,7 @@ private struct ThresholdSheet: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Lower the sound until you can only just hear it, then save.")
+                Text("Lower the sound until you can only just hear it. This lets loudness be saved relative to your hearing.")
                 Text(Format.level(model.thresholdDBFS))
                     .font(.largeTitle.monospacedDigit())
                 Slider(
@@ -157,16 +165,19 @@ private struct ThresholdSheet: View {
                 Text("Your match is \(Format.level(model.levelDBFS - model.thresholdDBFS)) above this.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                TextField("Match name", text: $model.matchName)
+                    .textFieldStyle(.roundedBorder)
+                    .submitLabel(.done)
                 Spacer()
                 Button(action: onSave) {
-                    Text("I can just hear it, save")
+                    Text("Save Match")
                         .font(.headline)
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }
                 .buttonStyle(.borderedProminent)
             }
             .padding()
-            .navigationTitle("Hearing threshold")
+            .navigationTitle("Save Match")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

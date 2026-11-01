@@ -51,6 +51,32 @@ struct PitchNudgeRow: View {
     }
 }
 
+/// Halve, narrow slightly, widen slightly, and double the width, like the pitch buttons.
+struct WidthNudgeRow: View {
+    let model: TunerModel
+
+    var body: some View {
+        HStack(spacing: 8) {
+            nudge("Width ÷2", label: "Halve width") { model.scaleWidth(by: 0.5) }
+            nudge("−", label: "Narrower slightly") { model.nudgeWidth(by: -0.04) }
+            nudge("+", label: "Wider slightly") { model.nudgeWidth(by: 0.04) }
+            nudge("Width ×2", label: "Double width") { model.scaleWidth(by: 2) }
+        }
+    }
+
+    private func nudge(_ title: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.callout.weight(.medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.bordered)
+        .accessibilityLabel(label)
+    }
+}
+
 struct EarPicker: View {
     @Bindable var model: TunerModel
 

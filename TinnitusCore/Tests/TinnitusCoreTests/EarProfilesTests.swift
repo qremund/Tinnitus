@@ -61,4 +61,27 @@ final class EarProfilesTests: XCTestCase {
         XCTAssertTrue(EarProfiles.from([], sameForBothEars: false).isEmpty)
         XCTAssertTrue(EarProfiles.from([], sameForBothEars: true).pitches.isEmpty)
     }
+
+    func testChosenMatchOverridesTheMedianForThatEar() {
+        let old = profile(2000, .left, daysAgo: 5)
+        let profiles = [profile(3000, .left, daysAgo: 1), profile(3200, .right, daysAgo: 0), old]
+        let ears = EarProfiles.resolve(profiles, sameForBothEars: false, leftChoice: old.id, rightChoice: nil)
+        XCTAssertEqual(ears.left, old)
+        XCTAssertEqual(ears.right?.centerFrequencyHz ?? 0, 3200, accuracy: 0.01)
+    }
+
+    func testChoiceCanUseAnotherEarsMatchAndIgnoresMissingIDs() {
+        let right = profile(4000, .right, daysAgo: 0)
+        let profiles = [profile(3000, .left, daysAgo: 1), right]
+        let ears = EarProfiles.resolve(profiles, sameForBothEars: false, leftChoice: right.id, rightChoice: UUID())
+        XCTAssertEqual(ears.left, right)
+        XCTAssertEqual(ears.right, right)
+    }
+
+    func testMedianDropsTheNewestMatchName() {
+        var named = profile(3000, .both, daysAgo: 0)
+        named.name = "Evening"
+        let median = TinnitusProfile.consensus(of: [named, profile(3100, .both, daysAgo: 1)])
+        XCTAssertNil(median?.name)
+    }
 }

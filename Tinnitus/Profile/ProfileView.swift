@@ -4,6 +4,8 @@ import TinnitusCore
 struct ProfileView: View {
     @Environment(ProfileStore.self) private var store
     @AppStorage("notchWidthOctaves") private var notchWidthOctaves = 1.0
+    @State private var renaming: TinnitusProfile?
+    @State private var newName = ""
 
     var body: some View {
         @Bindable var store = store
@@ -34,10 +36,15 @@ struct ProfileView: View {
                 }
 
                 if !store.profiles.isEmpty {
-                    Section("Sessions") {
+                    Section {
                         ForEach(store.profiles) { profile in
                             VStack(alignment: .leading) {
-                                Text(profile.date, format: .dateTime.month().day().hour().minute())
+                                Text(Format.matchTitle(profile)).font(.headline)
+                                if profile.name != nil {
+                                    Text(profile.date, format: .dateTime.month().day().hour().minute())
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                                 Text("\(profile.ear.shortTitle): \(Format.frequency(profile.centerFrequencyHz)), \(Format.bandwidth(profile.bandwidthOctaves)), \(Format.level(profile.sensationLevelDB)) above threshold")
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
@@ -45,12 +52,30 @@ struct ProfileView: View {
                                     Text(profile.notes).font(.caption)
                                 }
                             }
+                            .swipeActions(edge: .leading) {
+                                Button("Rename") {
+                                    newName = profile.name ?? ""
+                                    renaming = profile
+                                }
+                                .tint(.blue)
+                            }
                         }
                         .onDelete(perform: store.delete)
+                    } header: {
+                        Text("Saved matches")
+                    } footer: {
+                        Text("Swipe right to rename, left to delete. Choose which match each ear uses in Play or Music.")
                     }
                 }
             }
             .navigationTitle("Profile")
+            .alert("Rename match", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+                TextField("Name", text: $newName)
+                Button("Save") {
+                    if let profile = renaming { store.rename(profile.id, to: newName) }
+                }
+                Button("Cancel", role: .cancel) {}
+            }
         }
     }
 

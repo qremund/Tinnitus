@@ -15,6 +15,7 @@ struct PlayView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     notchSummary
+                    MatchChooser()
 
                     LazyVGrid(columns: columns, spacing: 12) {
                         ForEach(SleepSound.allCases, id: \.self) { sound in

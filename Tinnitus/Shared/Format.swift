@@ -27,6 +27,16 @@ enum Format {
         centerHz.map { notchRange(centerHz: $0, widthOctaves: widthOctaves) } ?? "unfiltered"
     }
 
+    /// A saved match's name, or its date when it has none.
+    static func matchTitle(_ profile: TinnitusProfile) -> String {
+        profile.name ?? profile.date.formatted(.dateTime.month().day().hour().minute())
+    }
+
+    /// One line describing a saved match.
+    static func matchSummary(_ profile: TinnitusProfile) -> String {
+        "\(profile.ear.shortTitle) · \(frequency(profile.centerFrequencyHz)) · \(bandwidth(profile.bandwidthOctaves))"
+    }
+
     /// Minutes and seconds, like 3:07.
     static func duration(_ seconds: TimeInterval) -> String {
         let total = Int(max(seconds, 0).rounded(.down))

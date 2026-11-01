@@ -41,6 +41,7 @@ struct SlidersLayout: View {
                     Text("Wide").font(.caption2)
                 }
                 .accessibilityValue(TunerText.width(model))
+                WidthNudgeRow(model: model)
             }
 
             TunerCard {
@@ -127,9 +128,10 @@ struct PadLayout: View {
                 })
                 .modifier(PitchAccessibility(model: model))
             }
-            .frame(minHeight: 260)
+            .frame(minHeight: 220)
 
             PitchNudgeRow(model: model)
+            WidthNudgeRow(model: model)
 
             TunerCard {
                 HStack {
@@ -241,7 +243,7 @@ struct BandLayout: View {
                 )
                 .modifier(PitchAccessibility(model: model))
             }
-            .frame(minHeight: 260)
+            .frame(minHeight: 220)
 
             HStack(spacing: 8) {
                 tile("Pitch", Format.frequency(model.pitchHz))
@@ -249,11 +251,8 @@ struct BandLayout: View {
                 tile("Loudness", TunerText.loudnessShort(model))
             }
 
-            HStack(spacing: 8) {
-                Button { model.octave(up: false) } label: { Text("Octave ↓").frame(maxWidth: .infinity, minHeight: 44) }
-                Button { model.octave(up: true) } label: { Text("Octave ↑").frame(maxWidth: .infinity, minHeight: 44) }
-            }
-            .buttonStyle(.bordered)
+            PitchNudgeRow(model: model)
+            WidthNudgeRow(model: model)
 
             HStack {
                 Text("Ear").foregroundStyle(.secondary)
@@ -389,6 +388,13 @@ struct DialLayout: View {
                 small("−", "Lower slightly") { model.nudgePitch(semitones: -0.25) }
                 small("+", "Raise slightly") { model.nudgePitch(semitones: 0.25) }
                 small("×2", "Octave up") { model.octave(up: true) }
+            }
+        case .width:
+            HStack(spacing: 8) {
+                small("÷2", "Halve width") { model.scaleWidth(by: 0.5) }
+                small("−", "Narrower slightly") { model.nudgeWidth(by: -0.04) }
+                small("+", "Wider slightly") { model.nudgeWidth(by: 0.04) }
+                small("×2", "Double width") { model.scaleWidth(by: 2) }
             }
         case .ear:
             EarPicker(model: model)
