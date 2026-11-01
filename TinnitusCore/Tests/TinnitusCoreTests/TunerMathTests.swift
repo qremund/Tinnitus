@@ -25,7 +25,9 @@ final class TunerMathTests: XCTestCase {
         XCTAssertEqual(TunerMath.soundType(forBandwidthOctaves: 0), .tone)
         XCTAssertEqual(TunerMath.soundType(forBandwidthOctaves: 1.0 / 32), .narrowHiss)
         XCTAssertEqual(TunerMath.soundType(forBandwidthOctaves: 1.0 / 8), .narrowHiss)
-        XCTAssertEqual(TunerMath.soundType(forBandwidthOctaves: 1.0 / 4), .broadHiss)
+        XCTAssertEqual(TunerMath.soundType(forBandwidthOctaves: 1.0 / 7), .narrowHiss)
+        XCTAssertEqual(TunerMath.soundType(forBandwidthOctaves: 1.0 / 3), .narrowHiss)
+        XCTAssertEqual(TunerMath.soundType(forBandwidthOctaves: 1.0 / 2), .broadHiss)
     }
 
     func testDialMapsAnglesAcrossTheSweep() {

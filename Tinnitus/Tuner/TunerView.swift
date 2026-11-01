@@ -44,6 +44,18 @@ struct TunerView: View {
     let layout: TunerLayout
     @State private var model: TunerModel?
     @State private var savedMessage: String?
+    @State private var creatingProfile = false
+    @State private var newProfileName = ""
+
+    /// Every saved match, so the tuner can start from the newest one and know your threshold near each pitch.
+    private var allMatches: EarProfiles {
+        EarProfiles.combining(store.profiles, sameForBothEars: false)
+    }
+
+    /// The active profile's matches, which can play alongside the test sound.
+    private var profileMatches: [TinnitusProfile] {
+        store.activeProfile.map { store.matches(in: $0) } ?? []
+    }
 
     var body: some View {
         Group {
@@ -55,7 +67,25 @@ struct TunerView: View {
         }
         .navigationTitle(layout.title)
         .navigationBarTitleDisplayMode(.inline)
-        .alert("Profile saved", isPresented: Binding(get: { savedMessage != nil }, set: { if !$0 { savedMessage = nil } })) {
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                profileMenu
+            }
+        }
+        .alert("New profile", isPresented: $creatingProfile) {
+            TextField("Name", text: $newProfileName)
+            Button("Create") { store.createProfile(named: newProfileName) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Matches you save here will be added to it.")
+        }
+        .onChange(of: profileMatches, initial: true) {
+            model?.setCompanions(profileMatches, sameForBothEars: store.sameForBothEars)
+        }
+        .onChange(of: store.sameForBothEars) {
+            model?.setCompanions(profileMatches, sameForBothEars: store.sameForBothEars)
+        }
+        .alert("Match saved", isPresented: Binding(get: { savedMessage != nil }, set: { if !$0 { savedMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(savedMessage ?? "")
@@ -65,7 +95,9 @@ struct TunerView: View {
             player.pause()
             music.pause()
             if model == nil {
-                model = TunerModel(audio: audio, saved: store.ears)
+                let created = TunerModel(audio: audio, saved: allMatches)
+                created.setCompanions(profileMatches, sameForBothEars: store.sameForBothEars)
+                model = created
             } else {
                 model?.updateSound()
             }
@@ -73,6 +105,32 @@ struct TunerView: View {
         .onDisappear {
             model?.stopSound()
         }
+    }
+
+    /// Shows which profile new matches go into, and switches or creates profiles.
+    private var profileMenu: some View {
+        Menu {
+            ProfileMenuItems()
+            Button("New Profile…", systemImage: "plus") {
+                newProfileName = store.nextProfileName
+                creatingProfile = true
+            }
+            if let model, store.activeProfile != nil {
+                Section {
+                    Toggle("Hear Its Other Matches", isOn: Binding(get: { model.hearProfile }, set: { model.hearProfile = $0 }))
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "square.stack.3d.up")
+                Text(store.activeProfile?.name ?? "No profile")
+                    .lineLimit(1)
+                    .frame(maxWidth: 110)
+            }
+            .font(.subheadline)
+        }
+        .accessibilityLabel("Profile")
+        .accessibilityValue(store.activeProfile?.name ?? "None")
     }
 
     @ViewBuilder
@@ -103,11 +161,21 @@ struct TunerView: View {
             get: { model.phase == .threshold },
             set: { if !$0, model.phase == .threshold { model.cancelThreshold() } }
         )) {
-            ThresholdSheet(model: model) {
-                let profile = model.makeProfile()
-                store.add(profile)
-                model.didSave(store.ears)
-                savedMessage = "\(Format.matchTitle(profile)) saved for \(profile.ear == .both ? "both ears" : "your \(profile.ear.shortTitle.lowercased()) ear"): \(Format.frequency(profile.centerFrequencyHz)), \(Format.bandwidth(profile.bandwidthOctaves)), \(Format.level(profile.sensationLevelDB)) above threshold."
+            ThresholdSheet(model: model, profileName: store.activeProfile?.name) {
+                let match = model.makeProfile()
+                store.add(match)
+                var added: String?
+                var problem: String?
+                if model.addToProfile, let profile = store.activeProfile {
+                    problem = store.load(match.id, into: profile.id)
+                    if problem == nil { added = profile.name }
+                }
+                model.didSave(allMatches)
+                let earText = match.ear == .both ? "both ears" : "your \(match.ear.shortTitle.lowercased()) ear"
+                var message = "\(Format.matchTitle(match)) saved for \(earText): \(Format.frequency(match.centerFrequencyHz)), \(Format.bandwidth(match.bandwidthOctaves)), \(Format.level(match.sensationLevelDB)) above threshold."
+                if let added { message += " Added to \(added)." }
+                if let problem { message += " Not added to the profile: \(problem)" }
+                savedMessage = message
             }
             .presentationDetents([.large])
         }
@@ -144,6 +212,8 @@ private struct TunerBottomBar: View {
 /// After Accept: one quick check of the faintest audible level, so loudness is saved relative to your hearing.
 private struct ThresholdSheet: View {
     @Bindable var model: TunerModel
+    /// The active profile, which the match can be added to.
+    let profileName: String?
     let onSave: () -> Void
 
     var body: some View {
@@ -171,6 +241,9 @@ private struct ThresholdSheet: View {
                     .textFieldStyle(.roundedBorder)
                     .textInputAutocapitalization(.sentences)
                     .submitLabel(.done)
+                if let profileName {
+                    Toggle("Add to \(profileName)", isOn: $model.addToProfile)
+                }
                 Spacer()
                 Button(action: onSave) {
                     Text("Save Match")

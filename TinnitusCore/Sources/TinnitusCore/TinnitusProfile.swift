@@ -82,26 +82,56 @@ public struct TinnitusProfile: Codable, Identifiable, Equatable, Sendable {
     }
 }
 
-/// The profile that sets the notch in each ear. A side with no profile plays unfiltered.
-public struct EarProfiles: Equatable, Sendable {
-    public var left: TinnitusProfile?
-    public var right: TinnitusProfile?
+/// A named set of saved matches used together, such as a left tone, a second left tone, and a right
+/// hiss. It refers to matches by id, so removing one from a profile never deletes the match itself.
+public struct MatchProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
+    public var id: UUID
+    public var name: String
+    public var matchIDs: [UUID]
 
+    public init(id: UUID = UUID(), name: String, matchIDs: [UUID] = []) {
+        self.id = id
+        self.name = name
+        self.matchIDs = matchIDs
+    }
+
+    public func contains(_ matchID: UUID) -> Bool { matchIDs.contains(matchID) }
+}
+
+/// The matches that set the notches in each ear, lowest pitch first. A side with none plays unfiltered.
+public struct EarProfiles: Equatable, Sendable {
+    public var left: [TinnitusProfile]
+    public var right: [TinnitusProfile]
+
+    public init(left: [TinnitusProfile], right: [TinnitusProfile]) {
+        self.left = left.sorted { $0.centerFrequencyHz < $1.centerFrequencyHz }
+        self.right = right.sorted { $0.centerFrequencyHz < $1.centerFrequencyHz }
+    }
+
+    /// One match (or none) per ear.
     public init(left: TinnitusProfile?, right: TinnitusProfile?) {
-        self.left = left
-        self.right = right
+        self.init(left: left.map { [$0] } ?? [], right: right.map { [$0] } ?? [])
     }
 
     /// Notch centers for each ear.
     public var pitches: EarPitches {
-        EarPitches(left: left?.centerFrequencyHz, right: right?.centerFrequencyHz)
+        EarPitches(left: left.map(\.centerFrequencyHz), right: right.map(\.centerFrequencyHz))
     }
 
-    public var isEmpty: Bool { left == nil && right == nil }
+    public var isEmpty: Bool { left.isEmpty && right.isEmpty }
 
-    /// Builds each ear's profile from the newest `sessions` matches that apply to it. Left and right
-    /// matches count for their own ear and "both" matches count for both. With `sameForBothEars`,
-    /// every match counts for both ears and the two sides get the same profile.
+    /// The matches for one ear. For `.both`, the matches that are in both ears.
+    public func matches(for ear: Ear) -> [TinnitusProfile] {
+        switch ear {
+        case .left: left
+        case .right: right
+        case .both: left.filter { match in right.contains { $0.id == match.id } }
+        }
+    }
+
+    /// Automatic mode: each ear gets the median of the newest `sessions` matches that apply to it.
+    /// Left and right matches count for their own ear and "both" matches count for both. With
+    /// `sameForBothEars`, every match counts for both ears and the two sides get the same median.
     public static func from(_ profiles: [TinnitusProfile], sameForBothEars: Bool, sessions: Int = 3) -> EarProfiles {
         let newestFirst = profiles.sorted { $0.date > $1.date }
         if sameForBothEars {
@@ -114,44 +144,41 @@ public struct EarProfiles: Equatable, Sendable {
         return EarProfiles(left: side(.left), right: side(.right))
     }
 
-    /// Like `from`, but an ear with a chosen match uses exactly that match instead of the recent median.
-    /// A chosen id that no longer exists falls back to the median.
-    public static func resolve(
-        _ profiles: [TinnitusProfile],
-        sameForBothEars: Bool,
-        leftChoice: UUID?,
-        rightChoice: UUID?,
-        sessions: Int = 3
-    ) -> EarProfiles {
-        var result = from(profiles, sameForBothEars: sameForBothEars, sessions: sessions)
-        if let id = leftChoice, let chosen = profiles.first(where: { $0.id == id }) {
-            result.left = chosen
+    /// A profile's matches, each in its own ear: left and right matches in that ear, "both" matches in
+    /// each. With `sameForBothEars`, every match goes in both ears.
+    public static func combining(_ matches: [TinnitusProfile], sameForBothEars: Bool) -> EarProfiles {
+        if sameForBothEars {
+            return EarProfiles(left: matches, right: matches)
         }
-        if let id = rightChoice, let chosen = profiles.first(where: { $0.id == id }) {
-            result.right = chosen
-        }
-        return result
+        return EarProfiles(left: matches.filter { $0.ear != .right }, right: matches.filter { $0.ear != .left })
     }
 }
 
-/// Notch center for each ear in Hz. nil leaves that ear unfiltered.
+/// Notch centers for each ear in Hz, lowest first. An empty side is unfiltered.
 public struct EarPitches: Equatable, Hashable, Sendable {
-    public var left: Double?
-    public var right: Double?
+    public var left: [Double]
+    public var right: [Double]
 
-    public init(left: Double?, right: Double?) {
-        self.left = left
-        self.right = right
+    public init(left: [Double], right: [Double]) {
+        self.left = left.sorted()
+        self.right = right.sorted()
     }
 
-    public static let none = EarPitches(left: nil, right: nil)
+    /// One notch (or none) per ear.
+    public init(left: Double?, right: Double?) {
+        self.init(left: left.map { [$0] } ?? [], right: right.map { [$0] } ?? [])
+    }
 
-    public var isEmpty: Bool { left == nil && right == nil }
+    public static let none = EarPitches(left: [], right: [])
+
+    public var isEmpty: Bool { left.isEmpty && right.isEmpty }
     public var isSameInBothEars: Bool { left == right }
 
-    /// Band-stop coefficients for one side, empty when that side is unfiltered.
+    public func centers(for ear: Ear) -> [Double] { ear == .right ? right : left }
+
+    /// Band-stop coefficients for one side, empty when that side is unfiltered. Several pitches give
+    /// several notches in series, with overlapping ones merged into one wider notch.
     public func notch(for ear: Ear, widthOctaves: Double, sampleRate: Double) -> [BiquadCoefficients] {
-        let center = ear == .right ? right : left
-        return center.map { NotchDesign.forTinnitus(centerHz: $0, widthOctaves: widthOctaves, sampleRate: sampleRate) } ?? []
+        NotchDesign.forTinnitus(centersHz: centers(for: ear), widthOctaves: widthOctaves, sampleRate: sampleRate)
     }
 }

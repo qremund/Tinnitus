@@ -19,12 +19,24 @@ final class TunerModel {
     var ear: Ear = .both { didSet { updateSound() } }
     var isSoundOn = true { didSet { updateSound() } }
 
+    /// Play the active profile's other matches quietly while tuning, to hear them together.
+    var hearProfile = UserDefaults.standard.object(forKey: "tunerHearProfile") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(hearProfile, forKey: "tunerHearProfile")
+            updateSound()
+        }
+    }
+    /// Add the saved match to the active profile.
+    var addToProfile = true
+
     private(set) var phase: Phase = .tuning
     var thresholdDBFS = -80.0 { didSet { updateSound() } }
 
     @ObservationIgnored private let audio: TestToneEngine
     @ObservationIgnored private var saved: EarProfiles
     @ObservationIgnored private var isLoading = false
+    /// The active profile's matches, played alongside the test sound when `hearProfile` is on.
+    @ObservationIgnored private var companions: [TestSoundParameters] = []
 
     init(audio: TestToneEngine, saved: EarProfiles) {
         self.audio = audio
@@ -125,11 +137,30 @@ final class TunerModel {
     func didSave(_ profiles: EarProfiles) {
         saved = profiles
         matchName = ""
+        addToProfile = true
         phase = .tuning
         updateSound()
     }
 
     // MARK: Sound
+
+    /// Sets the matches to play alongside the test sound, a little quieter than they were matched.
+    func setCompanions(_ matches: [TinnitusProfile], sameForBothEars: Bool) {
+        let next = matches.map { match in
+            TestSoundParameters(
+                frequencyHz: match.centerFrequencyHz,
+                kind: TestSoundKind(bandwidthOctaves: match.bandwidthOctaves),
+                levelDBFS: min(match.matchLevelDBFS - 6, SafetyLimits.maxTestLevelDBFS - 12),
+                ear: sameForBothEars ? .both : match.ear,
+                isPlaying: true
+            )
+        }
+        guard next != companions else { return }
+        companions = next
+        updateSound()
+    }
+
+    var hasCompanions: Bool { !companions.isEmpty }
 
     func updateSound() {
         guard !isLoading else { return }
@@ -138,29 +169,36 @@ final class TunerModel {
             return
         }
         let level = phase == .threshold ? thresholdDBFS : levelDBFS
+        // The threshold check needs the new sound alone.
+        let others = phase == .tuning && hearProfile ? companions : []
         audio.play(TestSoundParameters(
             frequencyHz: pitchHz,
             kind: TestSoundKind(bandwidthOctaves: bandwidthOctaves),
             levelDBFS: min(level, SafetyLimits.maxTestLevelDBFS),
             ear: ear
-        ))
+        ), companions: others)
     }
 
     func stopSound() {
         audio.stop()
     }
 
+    /// The saved match for that ear nearest the current pitch, since hearing thresholds change with pitch.
     private func savedProfile(for ear: Ear) -> TinnitusProfile? {
+        savedMatches(for: ear).min { abs(log2($0.centerFrequencyHz / pitchHz)) < abs(log2($1.centerFrequencyHz / pitchHz)) }
+    }
+
+    private func savedMatches(for ear: Ear) -> [TinnitusProfile] {
         switch ear {
         case .left: saved.left
         case .right: saved.right
-        case .both: saved.left ?? saved.right
+        case .both: saved.left + saved.right
         }
     }
 
-    /// Starts from the saved match for that ear, so each ear can be tuned on its own.
+    /// Starts from the newest saved match for that ear.
     private func loadSaved(for ear: Ear) {
-        guard let profile = savedProfile(for: ear) else {
+        guard let profile = savedMatches(for: ear).max(by: { $0.date < $1.date }) else {
             updateSound()
             return
         }

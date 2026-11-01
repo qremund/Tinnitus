@@ -31,10 +31,10 @@ public enum TunerMath {
         return minLevelDBFS + p * (maxLevelDBFS - minLevelDBFS)
     }
 
-    /// The sound type a tuned width corresponds to: a tone, a narrow hiss up to 1/8 octave, or a broad hiss.
+    /// The sound type a tuned width corresponds to: a tone, a narrow hiss up to 1/3 octave, or a broad hiss.
     public static func soundType(forBandwidthOctaves width: Double) -> TinnitusSoundType {
         if width <= 0 { return .tone }
-        return width <= 1.0 / 8 + 1e-9 ? .narrowHiss : .broadHiss
+        return width <= 1.0 / 3 + 1e-9 ? .narrowHiss : .broadHiss
     }
 
     /// The dial sweeps 270 degrees clockwise from the lower left, with a gap at the bottom.
