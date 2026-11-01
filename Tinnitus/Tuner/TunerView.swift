@@ -125,7 +125,7 @@ struct TunerView: View {
                 Image(systemName: "square.stack.3d.up")
                 Text(store.activeProfile?.name ?? "No profile")
                     .lineLimit(1)
-                    .frame(maxWidth: 110)
+                    .frame(maxWidth: 80)
             }
             .font(.subheadline)
         }
