@@ -5,10 +5,6 @@ import TinnitusCore
 /// State for the one-screen tuner. Every change plays the updated test sound right away.
 @Observable
 final class TunerModel {
-    enum Property: CaseIterable {
-        case pitch, width, loudness, ear
-    }
-
     enum Phase {
         case tuning
         /// After Accept: find the faintest audible level at the tuned sound, so loudness can be saved relative to it.
@@ -22,8 +18,6 @@ final class TunerModel {
     /// Changing the ear keeps the current tuning, so a match can be carried over and checked in the other ear.
     var ear: Ear = .both { didSet { updateSound() } }
     var isSoundOn = true { didSet { updateSound() } }
-    /// The property the dial layout is adjusting.
-    var selected: Property = .pitch
 
     private(set) var phase: Phase = .tuning
     var thresholdDBFS = -80.0 { didSet { updateSound() } }
@@ -89,26 +83,6 @@ final class TunerModel {
         case .left: ear = .both
         case .both: ear = .right
         case .right: ear = .left
-        }
-    }
-
-    /// The selected property as a 0...1 value, for the dial.
-    var selectedFraction: Double {
-        get {
-            switch selected {
-            case .pitch: pitchPosition
-            case .width: widthPosition
-            case .loudness: levelPosition
-            case .ear: ear == .left ? 0 : ear == .both ? 0.5 : 1
-            }
-        }
-        set {
-            switch selected {
-            case .pitch: pitchPosition = newValue
-            case .width: widthPosition = newValue
-            case .loudness: levelPosition = newValue
-            case .ear: ear = newValue < 1.0 / 3 ? .left : newValue > 2.0 / 3 ? .right : .both
-            }
         }
     }
 

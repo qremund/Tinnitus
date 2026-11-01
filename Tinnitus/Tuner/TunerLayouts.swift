@@ -60,11 +60,6 @@ struct SlidersLayout: View {
                 }
                 .accessibilityValue(TunerText.loudness(model))
             }
-
-            TunerCard {
-                TunerLabel(title: "Ear")
-                EarPicker(model: model)
-            }
         }
     }
 }
@@ -76,8 +71,6 @@ struct PadLayout: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            EarPicker(model: model)
-
             HStack(alignment: .bottom) {
                 VStack(alignment: .leading, spacing: 2) {
                     TunerLabel(title: "Pitch")
@@ -253,11 +246,6 @@ struct BandLayout: View {
 
             PitchNudgeRow(model: model)
             WidthNudgeRow(model: model)
-
-            HStack {
-                Text("Ear").foregroundStyle(.secondary)
-                EarPicker(model: model)
-            }
         }
     }
 
@@ -273,153 +261,133 @@ struct BandLayout: View {
     }
 }
 
-// MARK: D. Tiles and one dial
+// MARK: D. Two dials
 
 struct DialLayout: View {
     @Bindable var model: TunerModel
 
     var body: some View {
         VStack(spacing: 12) {
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
-                tile(.pitch, "Pitch", Format.frequency(model.pitchHz))
-                tile(.width, "Width", model.bandwidthOctaves <= 0 ? "Pure tone" : Format.bandwidth(model.bandwidthOctaves))
-                tile(.loudness, "Loudness", TunerText.loudnessShort(model))
-                tile(.ear, "Ear", model.ear.shortTitle)
+            HStack(alignment: .top, spacing: 12) {
+                VStack(spacing: 10) {
+                    TunerLabel(title: "Pitch")
+                    TunerDial(
+                        fraction: $model.pitchPosition,
+                        value: model.pitchHz >= 1000 ? String(format: "%.2f", model.pitchHz / 1000) : String(format: "%.0f", model.pitchHz),
+                        unit: model.pitchHz >= 1000 ? "kHz" : "Hz",
+                        label: "Pitch dial"
+                    ) { up in
+                        model.nudgePitch(semitones: up ? 1 : -1)
+                    }
+                    grid([
+                        ("÷2", "Octave down", { model.octave(up: false) }),
+                        ("×2", "Octave up", { model.octave(up: true) }),
+                        ("−", "Lower pitch slightly", { model.nudgePitch(semitones: -0.25) }),
+                        ("+", "Raise pitch slightly", { model.nudgePitch(semitones: 0.25) }),
+                    ])
+                }
+                VStack(spacing: 10) {
+                    TunerLabel(title: "Width")
+                    TunerDial(
+                        fraction: $model.widthPosition,
+                        value: model.bandwidthOctaves <= 0 ? "Tone" : Format.bandwidth(model.bandwidthOctaves).replacingOccurrences(of: " octave", with: ""),
+                        unit: model.bandwidthOctaves <= 0 ? "pure" : "octave",
+                        label: "Width dial"
+                    ) { up in
+                        model.nudgeWidth(by: up ? 0.04 : -0.04)
+                    }
+                    grid([
+                        ("÷2", "Halve width", { model.scaleWidth(by: 0.5) }),
+                        ("×2", "Double width", { model.scaleWidth(by: 2) }),
+                        ("−", "Narrower slightly", { model.nudgeWidth(by: -0.04) }),
+                        ("+", "Wider slightly", { model.nudgeWidth(by: 0.04) }),
+                    ])
+                }
             }
 
-            VStack(spacing: 14) {
-                dial
-                    .frame(width: 230, height: 230)
-                buttons
+            TunerCard {
+                HStack {
+                    TunerLabel(title: "Loudness")
+                    Spacer()
+                    Text(TunerText.loudness(model)).font(.headline.monospacedDigit())
+                }
+                Slider(value: $model.levelPosition) {
+                    Text("Loudness")
+                } minimumValueLabel: {
+                    Image(systemName: "speaker.fill").font(.caption)
+                } maximumValueLabel: {
+                    Image(systemName: "speaker.wave.3.fill").font(.caption)
+                }
+                .accessibilityValue(TunerText.loudness(model))
             }
-            .padding(16)
-            .frame(maxWidth: .infinity)
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
         }
     }
 
-    private func tile(_ property: TunerModel.Property, _ title: String, _ value: String) -> some View {
-        let isSelected = model.selected == property
-        return Button {
-            model.selected = property
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title.uppercased())
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-                Text(value)
-                    .font(.title3.bold().monospacedDigit())
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+    private func grid(_ buttons: [(String, String, () -> Void)]) -> some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+            ForEach(buttons.indices, id: \.self) { index in
+                let button = buttons[index]
+                Button(action: button.2) {
+                    Text(button.0).font(.title3.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel(button.1)
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(isSelected ? Color.accentColor : .clear, lineWidth: 2))
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-
-    private var dialValue: (String, String) {
-        switch model.selected {
-        case .pitch:
-            model.pitchHz >= 1000 ? (String(format: "%.2f", model.pitchHz / 1000), "kHz") : (String(format: "%.0f", model.pitchHz), "Hz")
-        case .width:
-            model.bandwidthOctaves <= 0 ? ("Tone", "pure") : (Format.bandwidth(model.bandwidthOctaves), "wide")
-        case .loudness:
-            (TunerText.loudnessShort(model), model.knownThresholdDBFS == nil ? "level" : "above threshold")
-        case .ear:
-            (model.ear.shortTitle, "ear")
         }
     }
+}
 
-    private var dial: some View {
+/// A round dial over a 270 degree sweep. Drag around it to set the value; VoiceOver swipes step it.
+struct TunerDial: View {
+    @Binding var fraction: Double
+    let value: String
+    let unit: String
+    let label: String
+    let step: (Bool) -> Void
+
+    var body: some View {
         GeometryReader { geometry in
             let size = min(geometry.size.width, geometry.size.height)
-            let radius = size / 2 - 12
-            let fraction = model.selectedFraction
             let angle = TunerMath.dialAngleDegrees(fraction: fraction) * .pi / 180
             ZStack {
                 Circle()
                     .trim(from: 0, to: 0.75)
-                    .stroke(Color.secondary.opacity(0.25), style: StrokeStyle(lineWidth: 16, lineCap: .round))
+                    .stroke(Color.secondary.opacity(0.25), style: StrokeStyle(lineWidth: 12, lineCap: .round))
                     .rotationEffect(.degrees(TunerMath.dialStartDegrees))
                 Circle()
                     .trim(from: 0, to: 0.75 * fraction)
-                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 16, lineCap: .round))
+                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 12, lineCap: .round))
                     .rotationEffect(.degrees(TunerMath.dialStartDegrees))
                 Circle()
                     .fill(.white)
-                    .frame(width: 26, height: 26)
+                    .frame(width: 22, height: 22)
                     .shadow(radius: 2)
-                    .offset(x: cos(angle) * (size / 2 - 8), y: sin(angle) * (size / 2 - 8))
-                VStack(spacing: 2) {
-                    Text(dialValue.0).font(.system(size: 36, weight: .bold).monospacedDigit()).minimumScaleFactor(0.5).lineLimit(1)
-                    Text(dialValue.1).font(.callout).foregroundStyle(.secondary)
+                    .offset(x: cos(angle) * (size / 2 - 6), y: sin(angle) * (size / 2 - 6))
+                VStack(spacing: 0) {
+                    Text(value)
+                        .font(.system(size: 26, weight: .bold).monospacedDigit())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
+                    Text(unit).font(.caption).foregroundStyle(.secondary)
                 }
-                .frame(width: radius * 1.4)
+                .frame(width: size * 0.62)
             }
-            .padding(8)
+            .padding(6)
             .frame(width: geometry.size.width, height: geometry.size.height)
             .contentShape(Circle())
-            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                let dx = value.location.x - geometry.size.width / 2
-                let dy = value.location.y - geometry.size.height / 2
-                guard dx * dx + dy * dy > 30 * 30 else { return }
-                model.selectedFraction = TunerMath.dialFraction(dx: dx, dy: dy)
+            .gesture(DragGesture(minimumDistance: 0).onChanged { drag in
+                let dx = drag.location.x - geometry.size.width / 2
+                let dy = drag.location.y - geometry.size.height / 2
+                guard dx * dx + dy * dy > 24 * 24 else { return }
+                fraction = TunerMath.dialFraction(dx: dx, dy: dy)
             })
             .accessibilityElement()
-            .accessibilityLabel("Dial")
-            .accessibilityValue("\(dialValue.0) \(dialValue.1)")
+            .accessibilityLabel(label)
+            .accessibilityValue("\(value) \(unit)")
             .accessibilityAdjustableAction { direction in
-                step(up: direction == .increment)
+                step(direction == .increment)
             }
         }
-    }
-
-    @ViewBuilder
-    private var buttons: some View {
-        switch model.selected {
-        case .pitch:
-            HStack(spacing: 8) {
-                small("÷2", "Octave down") { model.octave(up: false) }
-                small("−", "Lower slightly") { model.nudgePitch(semitones: -0.25) }
-                small("+", "Raise slightly") { model.nudgePitch(semitones: 0.25) }
-                small("×2", "Octave up") { model.octave(up: true) }
-            }
-        case .width:
-            HStack(spacing: 8) {
-                small("÷2", "Halve width") { model.scaleWidth(by: 0.5) }
-                small("−", "Narrower slightly") { model.nudgeWidth(by: -0.04) }
-                small("+", "Wider slightly") { model.nudgeWidth(by: 0.04) }
-                small("×2", "Double width") { model.scaleWidth(by: 2) }
-            }
-        case .ear:
-            EarPicker(model: model)
-        default:
-            HStack(spacing: 8) {
-                small("−", "Decrease") { step(up: false) }
-                small("+", "Increase") { step(up: true) }
-            }
-        }
-    }
-
-    private func step(up: Bool) {
-        switch model.selected {
-        case .pitch: model.nudgePitch(semitones: up ? 1 : -1)
-        case .width: model.nudgeWidth(by: up ? 0.05 : -0.05)
-        case .loudness: model.nudgeLevel(by: up ? 1 : -1)
-        case .ear: model.cycleEar()
-        }
-    }
-
-    private func small(_ title: String, _ label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title).font(.title3.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
-        }
-        .buttonStyle(.bordered)
-        .accessibilityLabel(label)
+        .aspectRatio(1, contentMode: .fit)
     }
 }

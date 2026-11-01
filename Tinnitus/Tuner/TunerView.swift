@@ -12,7 +12,7 @@ enum TunerLayout: String, CaseIterable, Identifiable {
         case .sliders: "Four sliders"
         case .pad: "Pitch and width pad"
         case .band: "Drag the band"
-        case .dial: "Tiles and one dial"
+        case .dial: "Two dials"
         }
     }
 
@@ -21,7 +21,7 @@ enum TunerLayout: String, CaseIterable, Identifiable {
         case .sliders: "Everything at once"
         case .pad: "Drag pitch and width"
         case .band: "See the shape you match"
-        case .dial: "Most precise"
+        case .dial: "Pitch and width dials"
         }
     }
 
@@ -83,6 +83,7 @@ struct TunerView: View {
                     .font(.callout)
                     .foregroundStyle(.orange)
             }
+            EarPicker(model: model)
             switch layout {
             case .sliders:
                 ScrollView { SlidersLayout(model: model) }
