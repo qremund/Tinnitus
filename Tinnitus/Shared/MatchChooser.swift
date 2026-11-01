@@ -32,17 +32,15 @@ struct MatchChooser: View {
                         Text("Automatic (recent median)")
                     }
                 }
-                Section("Saved matches") {
-                    ForEach(store.profiles) { profile in
-                        Button {
-                            store.choose(profile.id, for: ear)
-                        } label: {
-                            if choice == profile.id {
-                                Label("\(Format.matchTitle(profile)) · \(Format.matchSummary(profile))", systemImage: "checkmark")
-                            } else {
-                                Text("\(Format.matchTitle(profile)) · \(Format.matchSummary(profile))")
-                            }
-                        }
+                // Matches made for this ear (or both) come first; the other ear's are listed apart.
+                let own = store.profiles.filter { ear == .both || $0.ear == ear || $0.ear == .both }
+                let other = store.profiles.filter { !(ear == .both || $0.ear == ear || $0.ear == .both) }
+                Section(ear == .both ? "Saved matches" : "Matched for this ear") {
+                    ForEach(own) { option($0, ear: ear, choice: choice) }
+                }
+                if !other.isEmpty {
+                    Section("Matched for the other ear") {
+                        ForEach(other) { option($0, ear: ear, choice: choice) }
                     }
                 }
             } label: {
@@ -55,6 +53,18 @@ struct MatchChooser: View {
             }
             .accessibilityLabel("\(title) match")
             .accessibilityValue(label(for: choice))
+        }
+    }
+
+    private func option(_ profile: TinnitusProfile, ear: Ear, choice: UUID?) -> some View {
+        Button {
+            store.choose(profile.id, for: ear)
+        } label: {
+            if choice == profile.id {
+                Label("\(Format.matchTitle(profile)) · \(Format.matchSummary(profile))", systemImage: "checkmark")
+            } else {
+                Text("\(Format.matchTitle(profile)) · \(Format.matchSummary(profile))")
+            }
         }
     }
 

@@ -42,13 +42,14 @@ struct MatchHomeView: View {
             Text(layout.title)
                 .font(.headline)
                 .multilineTextAlignment(.leading)
+                .lineLimit(2, reservesSpace: true)
             Text(layout.detail)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.leading)
         }
         .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 140, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 150, maxHeight: 150, alignment: .topLeading)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
         .contentShape(RoundedRectangle(cornerRadius: 16))
     }

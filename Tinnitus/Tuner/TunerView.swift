@@ -108,7 +108,7 @@ struct TunerView: View {
                 model.didSave(store.ears)
                 savedMessage = "\(Format.matchTitle(profile)) saved for \(profile.ear == .both ? "both ears" : "your \(profile.ear.shortTitle.lowercased()) ear"): \(Format.frequency(profile.centerFrequencyHz)), \(Format.bandwidth(profile.bandwidthOctaves)), \(Format.level(profile.sensationLevelDB)) above threshold."
             }
-            .presentationDetents([.medium])
+            .presentationDetents([.large])
         }
     }
 }
@@ -149,6 +149,7 @@ private struct ThresholdSheet: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Lower the sound until you can only just hear it. This lets loudness be saved relative to your hearing.")
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(Format.level(model.thresholdDBFS))
                     .font(.largeTitle.monospacedDigit())
                 Slider(
@@ -167,6 +168,7 @@ private struct ThresholdSheet: View {
                     .foregroundStyle(.secondary)
                 TextField("Match name", text: $model.matchName)
                     .textFieldStyle(.roundedBorder)
+                    .textInputAutocapitalization(.sentences)
                     .submitLabel(.done)
                 Spacer()
                 Button(action: onSave) {
