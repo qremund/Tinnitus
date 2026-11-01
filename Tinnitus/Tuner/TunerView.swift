@@ -19,7 +19,7 @@ enum TunerLayout: String, CaseIterable, Identifiable {
     var detail: String {
         switch self {
         case .sliders: "Everything at once"
-        case .pad: "One drag for pitch and width"
+        case .pad: "Drag pitch and width"
         case .band: "See the shape you match"
         case .dial: "Most precise"
         }
