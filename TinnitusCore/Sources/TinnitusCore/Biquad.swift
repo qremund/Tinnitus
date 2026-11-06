@@ -30,6 +30,9 @@ public struct BiquadCoefficients: Equatable, Sendable {
         )
     }
 
+    /// Passes audio through unchanged.
+    public static let identity = BiquadCoefficients(b0: 1, b1: 0, b2: 0, a1: 0, a2: 0)
+
     /// Magnitude response in dB at `frequencyHz`.
     public func magnitudeDB(atHz frequencyHz: Double, sampleRate: Double) -> Double {
         let w = 2 * Double.pi * frequencyHz / sampleRate
@@ -100,13 +103,57 @@ public struct BiquadCascade {
     }
 
     /// Output variance for unit-variance white noise input: the sum of the squared impulse response.
-    public func whiteNoisePowerGain(sampleCount: Int = 1 << 15) -> Double {
-        var fresh = BiquadCascade(sections.map(\.coefficients))
-        var sum = 0.0
-        for n in 0..<sampleCount {
-            let y = fresh.process(n == 0 ? 1 : 0)
-            sum += y * y
+    /// Computed exactly from the coefficients (Astrom's recursion), so it costs a few dozen operations
+    /// instead of running the filter for thousands of samples.
+    public func whiteNoisePowerGain() -> Double {
+        BiquadCascade.whiteNoisePowerGain(of: sections.map(\.coefficients))
+    }
+
+    /// Exact white noise power gain of biquads in series. Unstable filters return infinity.
+    public static func whiteNoisePowerGain(of coefficients: [BiquadCoefficients]) -> Double {
+        // Multiply the sections out into one numerator and one denominator, in powers of z^-1.
+        var b: [Double] = [1]
+        var a: [Double] = [1]
+        for c in coefficients {
+            b = multiply(b, [c.b0, c.b1, c.b2])
+            a = multiply(a, [1, c.a1, c.a2])
         }
-        return sum
+        return astromIntegral(numerator: b, denominator: a)
+    }
+
+    private static func multiply(_ x: [Double], _ y: [Double]) -> [Double] {
+        var result = [Double](repeating: 0, count: x.count + y.count - 1)
+        for i in x.indices {
+            for j in y.indices {
+                result[i + j] += x[i] * y[j]
+            }
+        }
+        return result
+    }
+
+    /// Sum of h[n]^2 for H(z) = B(z)/A(z), both given in powers of z^-1 and the same length after padding.
+    static func astromIntegral(numerator: [Double], denominator: [Double]) -> Double {
+        let n = max(numerator.count, denominator.count) - 1
+        var a = denominator + [Double](repeating: 0, count: n + 1 - denominator.count)
+        var b = numerator + [Double](repeating: 0, count: n + 1 - numerator.count)
+        var sum = 0.0
+        var k = n
+        while k > 0 {
+            guard a[0] > 0 else { return .infinity }
+            let alpha = a[k] / a[0]
+            let beta = b[k] / a[0]
+            sum += beta * b[k]
+            var nextA = [Double](repeating: 0, count: k)
+            var nextB = [Double](repeating: 0, count: k)
+            for i in 0..<k {
+                nextA[i] = a[i] - alpha * a[k - i]
+                nextB[i] = b[i] - beta * a[k - i]
+            }
+            a = nextA
+            b = nextB
+            k -= 1
+        }
+        guard a[0] > 0 else { return .infinity }
+        return sum + b[0] * b[0] / a[0]
     }
 }
