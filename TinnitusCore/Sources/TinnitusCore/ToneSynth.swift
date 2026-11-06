@@ -85,6 +85,11 @@ public final class ToneSynth {
         smoothing = 1 - exp(-1 / (0.02 * sampleRate))
     }
 
+    /// True once a stopped sound has faded out, so a mixer can skip rendering it.
+    public var isSilent: Bool {
+        !configuration.parameters.isPlaying && leftGain < 1e-6 && rightGain < 1e-6
+    }
+
     public func apply(_ newConfiguration: Configuration) {
         configuration = newConfiguration
         filter.setCoefficients(newConfiguration.bandPass)

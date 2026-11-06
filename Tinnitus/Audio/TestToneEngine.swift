@@ -13,6 +13,8 @@ final class TestToneEngine {
     @ObservationIgnored private var sourceNode: AVAudioSourceNode?
     @ObservationIgnored private var renderState: RenderState?
     @ObservationIgnored private var parameters = TestSoundParameters()
+    /// Other sounds played quietly alongside the main one, such as a profile's other matches.
+    @ObservationIgnored private var companions: [TestSoundParameters] = []
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
 
     init() {
@@ -33,9 +35,15 @@ final class TestToneEngine {
         }
     }
 
-    func play(_ newParameters: TestSoundParameters) {
+    /// Plays the test sound, plus up to `RenderState.maxCompanions` other sounds mixed in with it.
+    func play(_ newParameters: TestSoundParameters, companions newCompanions: [TestSoundParameters] = []) {
         var p = newParameters
         p.isPlaying = true
+        companions = Array(newCompanions.prefix(RenderState.maxCompanions)).map {
+            var c = $0
+            c.isPlaying = true
+            return c
+        }
         submit(p)
         prepare()
     }
@@ -43,6 +51,7 @@ final class TestToneEngine {
     func stop() {
         var p = parameters
         p.isPlaying = false
+        companions = []
         submit(p)
     }
 
@@ -57,10 +66,7 @@ final class TestToneEngine {
                 ? engine.outputNode.outputFormat(forBus: 0).sampleRate
                 : 48_000
             guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2) else { return }
-            let state = RenderState(synth: ToneSynth(
-                sampleRate: sampleRate,
-                configuration: ToneSynth.configuration(for: parameters, sampleRate: sampleRate)
-            ))
+            let state = RenderState(sampleRate: sampleRate, configurations: configurations(sampleRate: sampleRate))
             let node = AVAudioSourceNode(format: format) { _, _, frameCount, bufferList in
                 let buffers = UnsafeMutableAudioBufferListPointer(bufferList)
                 guard let left = buffers[0].mData?.assumingMemoryBound(to: Float.self) else { return noErr }
@@ -84,7 +90,18 @@ final class TestToneEngine {
     private func submit(_ p: TestSoundParameters) {
         parameters = p
         guard let state = renderState else { return }
-        state.submit(ToneSynth.configuration(for: p, sampleRate: state.synth.sampleRate))
+        state.submit(configurations(sampleRate: state.sampleRate))
+    }
+
+    /// The main sound first, then one per companion slot. Unused slots are stopped so they fade out.
+    private func configurations(sampleRate: Double) -> [ToneSynth.Configuration] {
+        var all = [ToneSynth.configuration(for: parameters, sampleRate: sampleRate)]
+        for index in 0..<RenderState.maxCompanions {
+            var c = index < companions.count ? companions[index] : TestSoundParameters()
+            if !parameters.isPlaying { c.isPlaying = false }
+            all.append(ToneSynth.configuration(for: c, sampleRate: sampleRate))
+        }
+        return all
     }
 
     private func rebuild() {
@@ -112,27 +129,58 @@ final class TestToneEngine {
     }
 }
 
-/// Owns the synth on the audio thread. New settings arrive through a lock the audio thread never waits on.
+/// Owns the synths on the audio thread: the main test sound and a few companions mixed in with it.
+/// New settings arrive through a lock the audio thread never waits on.
 private final class RenderState {
-    let synth: ToneSynth
-    private let pending = OSAllocatedUnfairLock<ToneSynth.Configuration?>(initialState: nil)
+    static let maxCompanions = 4
+    /// Companions render into these, then get added to the output.
+    private static let scratchFrames = 4096
 
-    init(synth: ToneSynth) {
-        self.synth = synth
+    let sampleRate: Double
+    private let synths: [ToneSynth]
+    private let pending = OSAllocatedUnfairLock<[ToneSynth.Configuration]?>(initialState: nil)
+    private let scratchLeft = UnsafeMutablePointer<Float>.allocate(capacity: scratchFrames)
+    private let scratchRight = UnsafeMutablePointer<Float>.allocate(capacity: scratchFrames)
+
+    init(sampleRate: Double, configurations: [ToneSynth.Configuration]) {
+        self.sampleRate = sampleRate
+        synths = configurations.prefix(1 + Self.maxCompanions).map { ToneSynth(sampleRate: sampleRate, configuration: $0) }
     }
 
-    func submit(_ configuration: ToneSynth.Configuration) {
-        pending.withLock { $0 = configuration }
+    deinit {
+        scratchLeft.deallocate()
+        scratchRight.deallocate()
+    }
+
+    func submit(_ configurations: [ToneSynth.Configuration]) {
+        pending.withLock { $0 = configurations }
     }
 
     func render(left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>?, frameCount: Int) {
-        let next = pending.withLockIfAvailable { state -> ToneSynth.Configuration? in
+        let next = pending.withLockIfAvailable { state -> [ToneSynth.Configuration]? in
             defer { state = nil }
             return state
         }
-        if let next, let configuration = next {
-            synth.apply(configuration)
+        if let next, let configurations = next {
+            for (synth, configuration) in zip(synths, configurations) {
+                synth.apply(configuration)
+            }
         }
-        synth.render(left: left, right: right, frameCount: frameCount)
+        guard let main = synths.first else { return }
+        main.render(left: left, right: right, frameCount: frameCount)
+        for synth in synths.dropFirst() where !synth.isSilent {
+            var offset = 0
+            while offset < frameCount {
+                let count = min(frameCount - offset, Self.scratchFrames)
+                synth.render(left: scratchLeft, right: scratchRight, frameCount: count)
+                for i in 0..<count {
+                    left[offset + i] = min(max(left[offset + i] + scratchLeft[i], -1), 1)
+                    if let right {
+                        right[offset + i] = min(max(right[offset + i] + scratchRight[i], -1), 1)
+                    }
+                }
+                offset += count
+            }
+        }
     }
 }

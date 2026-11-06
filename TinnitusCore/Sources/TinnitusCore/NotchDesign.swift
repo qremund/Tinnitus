@@ -11,6 +11,45 @@ public enum NotchDesign {
         return bandStop(lowHz: edges.low, highHz: edges.high, sampleRate: sampleRate)
     }
 
+    /// The most separate notches in one ear. Each is 4 biquads, so this bounds the work per sample.
+    public static let maxNotchesPerEar = 4
+
+    /// The bands removed for notches at `centersHz`, lowest first. Notches that overlap merge into one
+    /// wider band. If more than `maxBands` remain, the two closest neighbors are joined until they fit,
+    /// so every pitch stays notched.
+    public static func bands(centersHz: [Double], widthOctaves: Double, maxBands: Int = maxNotchesPerEar) -> [(low: Double, high: Double)] {
+        var merged: [(low: Double, high: Double)] = []
+        for center in centersHz.filter({ $0 > 0 }).sorted() {
+            let band = PitchMatching.notchEdges(centerHz: center, widthOctaves: widthOctaves)
+            if let last = merged.last, band.low <= last.high {
+                merged[merged.count - 1].high = max(last.high, band.high)
+            } else {
+                merged.append(band)
+            }
+        }
+        while merged.count > max(maxBands, 1) {
+            var closest = 0
+            var smallestGap = Double.infinity
+            for i in 0..<(merged.count - 1) {
+                let gap = log2(merged[i + 1].low / merged[i].high)
+                if gap < smallestGap {
+                    smallestGap = gap
+                    closest = i
+                }
+            }
+            merged[closest].high = max(merged[closest].high, merged[closest + 1].high)
+            merged.remove(at: closest + 1)
+        }
+        return merged
+    }
+
+    /// Notches for every pitch in one ear, in series. Empty when there are no pitches.
+    public static func forTinnitus(centersHz: [Double], widthOctaves: Double, sampleRate: Double) -> [BiquadCoefficients] {
+        bands(centersHz: centersHz, widthOctaves: widthOctaves).flatMap {
+            bandStop(lowHz: $0.low, highHz: $0.high, sampleRate: sampleRate)
+        }
+    }
+
     /// Band-stop with -3 dB points at `lowHz` and `highHz`, unity gain well outside the band.
     public static func bandStop(lowHz: Double, highHz: Double, sampleRate: Double) -> [BiquadCoefficients] {
         let maxHz = sampleRate * 0.45

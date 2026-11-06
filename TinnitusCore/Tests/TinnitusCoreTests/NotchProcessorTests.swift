@@ -79,4 +79,38 @@ final class NotchProcessorTests: XCTestCase {
         samples.withUnsafeMutableBufferPointer { processor.process($0.baseAddress!, frameCount: 3, channel: 0) }
         XCTAssertEqual(samples, [0.5, -0.25, 1])
     }
+
+    func testTwoNotchesInOneEar() {
+        // Half-octave notches at 3 and 6 kHz, both in the left ear; 4.24 kHz sits between them.
+        let processor = NotchProcessor.forTinnitus(pitches: EarPitches(left: [3000, 6000], right: []), widthOctaves: 0.5, sampleRate: sampleRate, channelCount: 2)
+        func rmsAfter(_ hz: Double) -> Double {
+            var copy = processor
+            let total = Int(sampleRate)
+            var x = (0..<total).map { Float(sin(2 * Double.pi * hz * Double($0) / sampleRate)) }
+            x.withUnsafeMutableBufferPointer { copy.process($0.baseAddress!, frameCount: total, channel: 0) }
+            let tail = x[(total / 2)...]
+            return (tail.reduce(0) { $0 + Double($1) * Double($1) } / Double(tail.count)).squareRoot()
+        }
+        XCTAssertLessThan(rmsAfter(3000), 0.001)
+        XCTAssertLessThan(rmsAfter(6000), 0.001)
+        XCTAssertGreaterThan(rmsAfter(4243), 0.4)
+        XCTAssertEqual(processor.channels[0].sections.count, 8)
+        XCTAssertTrue(processor.channels[1].sections.isEmpty)
+    }
+
+    func testOverlappingNotchesMerge() {
+        let bands = NotchDesign.bands(centersHz: [3000, 3300, 8000], widthOctaves: 0.5)
+        XCTAssertEqual(bands.count, 2)
+        XCTAssertEqual(bands[0].low, 3000 * pow(2, -0.25), accuracy: 0.01)
+        XCTAssertEqual(bands[0].high, 3300 * pow(2, 0.25), accuracy: 0.01)
+    }
+
+    func testTooManyNotchesJoinTheClosestNeighbors() {
+        let bands = NotchDesign.bands(centersHz: [500, 1000, 2000, 2500, 8000, 16000], widthOctaves: 0.1, maxBands: 4)
+        XCTAssertEqual(bands.count, 4)
+        // Six notches become four, and every pitch stays inside a band.
+        for center in [500.0, 1000, 2000, 2500, 8000, 16000] {
+            XCTAssertTrue(bands.contains { $0.low <= center && center <= $0.high }, "\(center) not notched")
+        }
+    }
 }

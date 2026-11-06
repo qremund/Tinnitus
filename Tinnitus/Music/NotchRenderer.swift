@@ -23,7 +23,9 @@ final class NotchRenderer {
     }
 
     func cachedURL(for track: Track, pitches: EarPitches, widthOctaves: Double) -> URL {
-        func hz(_ value: Double?) -> String { value.map { String(Int($0.rounded())) } ?? "off" }
+        func hz(_ values: [Double]) -> String {
+            values.isEmpty ? "off" : values.map { String(Int($0.rounded())) }.joined(separator: "_")
+        }
         let name = "\(track.id.uuidString)-L\(hz(pitches.left))-R\(hz(pitches.right))-\(Int((widthOctaves * 100).rounded())).caf"
         return MusicFiles.cacheFolder.appending(path: name)
     }
