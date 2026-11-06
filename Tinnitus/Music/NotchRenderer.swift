@@ -22,8 +22,9 @@ final class NotchRenderer {
         try? FileManager.default.createDirectory(at: MusicFiles.cacheFolder, withIntermediateDirectories: true)
     }
 
-    func cachedURL(for track: Track, centerHz: Double, widthOctaves: Double) -> URL {
-        let name = "\(track.id.uuidString)-\(Int(centerHz.rounded()))-\(Int((widthOctaves * 100).rounded())).caf"
+    func cachedURL(for track: Track, pitches: EarPitches, widthOctaves: Double) -> URL {
+        func hz(_ value: Double?) -> String { value.map { String(Int($0.rounded())) } ?? "off" }
+        let name = "\(track.id.uuidString)-L\(hz(pitches.left))-R\(hz(pitches.right))-\(Int((widthOctaves * 100).rounded())).caf"
         return MusicFiles.cacheFolder.appending(path: name)
     }
 
@@ -31,21 +32,21 @@ final class NotchRenderer {
     @discardableResult
     func render(
         _ track: Track,
-        centerHz: Double,
+        pitches: EarPitches,
         widthOctaves: Double,
         progress: ((Double) -> Void)? = nil,
         completion: @escaping (Result<URL, Error>) -> Void
     ) -> Job {
         let job = Job()
         let source = track.url
-        let destination = cachedURL(for: track, centerHz: centerHz, widthOctaves: widthOctaves)
+        let destination = cachedURL(for: track, pitches: pitches, widthOctaves: widthOctaves)
         queue.async {
             let result = Result {
                 if FileManager.default.fileExists(atPath: destination.path) {
                     // Mark as recently used so pruning keeps it.
                     try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: destination.path)
                 } else {
-                    try Self.renderFile(source: source, destination: destination, centerHz: centerHz, widthOctaves: widthOctaves, job: job, progress: progress)
+                    try Self.renderFile(source: source, destination: destination, pitches: pitches, widthOctaves: widthOctaves, job: job, progress: progress)
                     Self.prune()
                 }
                 return destination
@@ -68,14 +69,16 @@ final class NotchRenderer {
     private static func renderFile(
         source: URL,
         destination: URL,
-        centerHz: Double,
+        pitches: EarPitches,
         widthOctaves: Double,
         job: Job,
         progress: ((Double) -> Void)?
     ) throws {
         let input = try AVAudioFile(forReading: source)
         let format = input.processingFormat
-        let channelCount = Int(format.channelCount)
+        let inputChannels = Int(format.channelCount)
+        // A mono song needs two channels to carry a different notch in each ear.
+        let channelCount = inputChannels == 1 && !pitches.isSameInBothEars ? 2 : inputChannels
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames) else {
             throw CocoaError(.fileReadUnknown)
         }
@@ -91,7 +94,7 @@ final class NotchRenderer {
         try? FileManager.default.removeItem(at: partial)
 
         var processor = NotchProcessor.forTinnitus(
-            centerHz: centerHz,
+            pitches: pitches,
             widthOctaves: widthOctaves,
             sampleRate: format.sampleRate,
             channelCount: channelCount
@@ -102,15 +105,25 @@ final class NotchRenderer {
         do {
             // Scoped so the output file is closed before it is moved into place.
             let output = try AVAudioFile(forWriting: partial, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+            let upmixed = channelCount == inputChannels ? nil : AVAudioPCMBuffer(pcmFormat: output.processingFormat, frameCapacity: chunkFrames)
             while input.framePosition < input.length {
                 if job.isCancelled { throw CancellationError() }
                 try input.read(into: buffer, frameCount: chunkFrames)
                 let frames = Int(buffer.frameLength)
-                guard frames > 0, let channels = buffer.floatChannelData else { break }
+                guard frames > 0, let source = buffer.floatChannelData else { break }
+                var target = buffer
+                if let upmixed, let channels = upmixed.floatChannelData {
+                    upmixed.frameLength = buffer.frameLength
+                    for channel in 0..<channelCount {
+                        channels[channel].update(from: source[0], count: frames)
+                    }
+                    target = upmixed
+                }
+                guard let channels = target.floatChannelData else { break }
                 for channel in 0..<channelCount {
                     processor.process(channels[channel], frameCount: frames, channel: channel)
                 }
-                try output.write(from: buffer)
+                try output.write(from: target)
 
                 let fraction = Double(input.framePosition) / total
                 if let progress, fraction - lastReported >= 0.02 {

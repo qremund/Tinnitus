@@ -16,6 +16,17 @@ enum Format {
         "\(Int(db.rounded())) dB"
     }
 
+    /// The band the notch removes, like "4.24 kHz to 8.49 kHz".
+    static func notchRange(centerHz: Double, widthOctaves: Double) -> String {
+        let edges = PitchMatching.notchEdges(centerHz: centerHz, widthOctaves: widthOctaves)
+        return "\(frequency(edges.low)) to \(frequency(edges.high))"
+    }
+
+    /// One ear's notch for summaries, or "unfiltered" when that ear has no match.
+    static func earNotch(_ centerHz: Double?, widthOctaves: Double) -> String {
+        centerHz.map { notchRange(centerHz: $0, widthOctaves: widthOctaves) } ?? "unfiltered"
+    }
+
     /// Minutes and seconds, like 3:07.
     static func duration(_ seconds: TimeInterval) -> String {
         let total = Int(max(seconds, 0).rounded(.down))
@@ -29,6 +40,14 @@ extension Ear {
         case .left: "Left"
         case .right: "Right"
         case .both: "Both / in my head"
+        }
+    }
+
+    var shortTitle: String {
+        switch self {
+        case .left: "Left"
+        case .right: "Right"
+        case .both: "Both"
         }
     }
 }

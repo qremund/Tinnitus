@@ -1,6 +1,7 @@
 import AVFoundation
 import MediaPlayer
 import Observation
+import TinnitusCore
 
 /// Plays imported songs, with the notched copy running in sync so the filter can be toggled with a crossfade.
 @Observable
@@ -40,7 +41,7 @@ final class MusicPlayer {
     @ObservationIgnored private var pausedFrame: AVAudioFramePosition = 0
     /// Bumped whenever scheduled audio is thrown away, so stale completion callbacks are ignored.
     @ObservationIgnored private var generation = 0
-    @ObservationIgnored private var notchCenterHz: Double?
+    @ObservationIgnored private var notchPitches = EarPitches.none
     @ObservationIgnored private var notchWidthOctaves = 1.0
     @ObservationIgnored private var wetMix: Float = 1
     @ObservationIgnored private var fadeTimer: Timer?
@@ -84,12 +85,12 @@ final class MusicPlayer {
 
     // MARK: Notch
 
-    /// Sets the notch from the saved profile. Pass nil to play unfiltered.
-    func setNotch(centerHz: Double?, widthOctaves: Double) {
-        guard centerHz != notchCenterHz || widthOctaves != notchWidthOctaves else { return }
-        notchCenterHz = centerHz
+    /// Sets each ear's notch from the saved profiles. An ear without a pitch plays unfiltered.
+    func setNotch(pitches: EarPitches, widthOctaves: Double) {
+        guard pitches != notchPitches || widthOctaves != notchWidthOctaves else { return }
+        notchPitches = pitches
         notchWidthOctaves = widthOctaves
-        hasNotch = centerHz != nil
+        hasNotch = !pitches.isEmpty
         // The rendered copy no longer matches, so reload the song where it is.
         if let index = currentIndex {
             load(index: index, from: currentFrame, autoplay: isPlaying)
@@ -107,7 +108,7 @@ final class MusicPlayer {
     func play() {
         guard let index = currentIndex else { return }
         // Reload if the filtered copy never finished, so the song doesn't start unfiltered.
-        if dryFile == nil || isPreparing || (notchCenterHz != nil && wetFile == nil) {
+        if dryFile == nil || isPreparing || (hasNotch && wetFile == nil) {
             load(index: index, from: pausedFrame, autoplay: true)
         } else {
             start(from: pausedFrame)
@@ -211,7 +212,7 @@ final class MusicPlayer {
             return
         }
 
-        guard let centerHz = notchCenterHz else {
+        guard hasNotch else {
             if autoplay { start(from: frame) } else { updateNowPlaying() }
             return
         }
@@ -219,7 +220,7 @@ final class MusicPlayer {
         isPreparing = autoplay
         prepareProgress = 0
         let loadGeneration = generation
-        renderJob = renderer.render(track, centerHz: centerHz, widthOctaves: notchWidthOctaves, progress: { [weak self] fraction in
+        renderJob = renderer.render(track, pitches: notchPitches, widthOctaves: notchWidthOctaves, progress: { [weak self] fraction in
             guard let self, self.generation == loadGeneration else { return }
             self.prepareProgress = fraction
         }, completion: { [weak self] result in
@@ -241,8 +242,8 @@ final class MusicPlayer {
 
     /// Renders the next song in the background so it starts without a wait.
     private func prefetchNext() {
-        guard let index = currentIndex, index + 1 < queue.count, let centerHz = notchCenterHz else { return }
-        prefetchJob = renderer.render(queue[index + 1], centerHz: centerHz, widthOctaves: notchWidthOctaves) { _ in }
+        guard let index = currentIndex, index + 1 < queue.count, hasNotch else { return }
+        prefetchJob = renderer.render(queue[index + 1], pitches: notchPitches, widthOctaves: notchWidthOctaves) { _ in }
     }
 
     // MARK: Engine
@@ -261,7 +262,7 @@ final class MusicPlayer {
             return
         }
         do {
-            try startEngine(format: dry.processingFormat)
+            try startEngine(format: dry.processingFormat, wetFormat: wetFile?.processingFormat ?? dry.processingFormat)
         } catch {
             errorMessage = "Audio could not start: \(error.localizedDescription)"
             return
@@ -294,14 +295,17 @@ final class MusicPlayer {
         updateNowPlaying()
     }
 
-    private func startEngine(format: AVAudioFormat) throws {
+    private func startEngine(format: AVAudioFormat, wetFormat: AVAudioFormat) throws {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playback, mode: .default)
         try session.setActive(true)
         // Songs can differ in sample rate and channel count, so connect with each song's own format.
+        // A mono song with a different notch in each ear has a stereo filtered copy.
         if dryNode.outputFormat(forBus: 0) != format || engine.outputConnectionPoints(for: dryNode, outputBus: 0).isEmpty {
             engine.connect(dryNode, to: engine.mainMixerNode, format: format)
-            engine.connect(wetNode, to: engine.mainMixerNode, format: format)
+        }
+        if wetNode.outputFormat(forBus: 0) != wetFormat || engine.outputConnectionPoints(for: wetNode, outputBus: 0).isEmpty {
+            engine.connect(wetNode, to: engine.mainMixerNode, format: wetFormat)
         }
         if !engine.isRunning {
             engine.prepare()

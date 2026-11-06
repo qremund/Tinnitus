@@ -36,7 +36,7 @@ final class SleepPlayer {
     @ObservationIgnored private let engine = AVAudioEngine()
     @ObservationIgnored private var sourceNode: AVAudioSourceNode?
     @ObservationIgnored private var renderState: MixerRenderState?
-    private var notchCenterHz: Double?
+    private var notchPitches = EarPitches.none
     @ObservationIgnored private var notchWidthOctaves = 1.0
     @ObservationIgnored private var fadeGain = 1.0
     @ObservationIgnored private var timer: Timer?
@@ -70,12 +70,12 @@ final class SleepPlayer {
         }
     }
 
-    var hasNotch: Bool { notchCenterHz != nil }
+    var hasNotch: Bool { !notchPitches.isEmpty }
 
-    /// Sets the notch from the saved profile. Pass nil to play unfiltered.
-    func setNotch(centerHz: Double?, widthOctaves: Double) {
-        guard centerHz != notchCenterHz || widthOctaves != notchWidthOctaves else { return }
-        notchCenterHz = centerHz
+    /// Sets each ear's notch from the saved profiles. An ear without a pitch plays unfiltered.
+    func setNotch(pitches: EarPitches, widthOctaves: Double) {
+        guard pitches != notchPitches || widthOctaves != notchWidthOctaves else { return }
+        notchPitches = pitches
         notchWidthOctaves = widthOctaves
         submit()
     }
@@ -180,14 +180,12 @@ final class SleepPlayer {
     }
 
     private func configuration(sampleRate: Double) -> SleepMixer.Configuration {
-        let notch = notchCenterHz.map {
-            NotchDesign.forTinnitus(centerHz: $0, widthOctaves: notchWidthOctaves, sampleRate: sampleRate)
-        } ?? []
-        return SleepMixer.Configuration(
+        SleepMixer.Configuration(
             sound: sound,
             levelDBFS: levelDBFS,
             isPlaying: isPlaying,
-            notch: notch,
+            leftNotch: notchPitches.notch(for: .left, widthOctaves: notchWidthOctaves, sampleRate: sampleRate),
+            rightNotch: notchPitches.notch(for: .right, widthOctaves: notchWidthOctaves, sampleRate: sampleRate),
             filterEnabled: filterEnabled,
             fadeGain: fadeGain
         )

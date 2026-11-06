@@ -74,12 +74,32 @@ final class SleepSoundTests: XCTestCase {
 
     func testMixerLevelAndNotch() {
         let notch = NotchDesign.forTinnitus(centerHz: 3000, widthOctaves: 1, sampleRate: sampleRate)
-        let dry = mixerRMS(.init(sound: .white, levelDBFS: -20, isPlaying: true, notch: notch, filterEnabled: false))
-        let wet = mixerRMS(.init(sound: .white, levelDBFS: -20, isPlaying: true, notch: notch, filterEnabled: true))
+        let dry = mixerRMS(.init(sound: .white, levelDBFS: -20, isPlaying: true, leftNotch: notch, rightNotch: notch, filterEnabled: false))
+        let wet = mixerRMS(.init(sound: .white, levelDBFS: -20, isPlaying: true, leftNotch: notch, rightNotch: notch, filterEnabled: true))
         XCTAssertEqual(dry, 0.1 / 2.0.squareRoot(), accuracy: 0.004)
         // Removing about 2.1 to 4.2 kHz takes roughly 9% of white noise's power.
         XCTAssertLessThan(wet, dry * 0.98)
         XCTAssertGreaterThan(wet, dry * 0.9)
+    }
+
+    func testMixerNotchesEachEarSeparately() {
+        let notch = NotchDesign.forTinnitus(centerHz: 3000, widthOctaves: 1, sampleRate: sampleRate)
+        let mixer = SleepMixer(sampleRate: sampleRate, configuration: .init(sound: .white, levelDBFS: -20, isPlaying: true, leftNotch: notch, rightNotch: []))
+        let count = Int(sampleRate * 4)
+        var left = [Float](repeating: 0, count: count)
+        var right = [Float](repeating: 0, count: count)
+        left.withUnsafeMutableBufferPointer { l in
+            right.withUnsafeMutableBufferPointer { r in
+                mixer.render(left: l.baseAddress!, right: r.baseAddress!, frameCount: count)
+            }
+        }
+        func rms(_ x: [Float]) -> Double {
+            let tail = x[(count / 2)...]
+            return (tail.reduce(0) { $0 + Double($1) * Double($1) } / Double(tail.count)).squareRoot()
+        }
+        // The right ear has no notch, so it plays at the full white-noise level.
+        XCTAssertEqual(rms(right), 0.1 / 2.0.squareRoot(), accuracy: 0.004)
+        XCTAssertLessThan(rms(left), rms(right) * 0.98)
     }
 
     func testMixerStoppedAndFaded() {
