@@ -103,57 +103,82 @@ public struct BiquadCascade {
     }
 
     /// Output variance for unit-variance white noise input: the sum of the squared impulse response.
-    /// Computed exactly from the coefficients (Astrom's recursion), so it costs a few dozen operations
-    /// instead of running the filter for thousands of samples.
+    /// Computed from the coefficients, so it costs a few thousand operations at most instead of running
+    /// the filter for as many samples as a narrow band takes to ring out.
     public func whiteNoisePowerGain() -> Double {
         BiquadCascade.whiteNoisePowerGain(of: sections.map(\.coefficients))
     }
 
     /// Exact white noise power gain of biquads in series. Unstable filters return infinity.
+    ///
+    /// Works on the sections' own state equations, x' = Ax + Bu and y = Cx + Du. The gain is
+    /// D^2 + C P C^T, where P is the sum of A^k B B^T (A^T)^k, and each pass below doubles the number of
+    /// terms in P. Multiplying the sections into one polynomial would be shorter, but its coefficients
+    /// lose the poles of a narrow, low band to rounding, which puts the answer off by percents.
     public static func whiteNoisePowerGain(of coefficients: [BiquadCoefficients]) -> Double {
-        // Multiply the sections out into one numerator and one denominator, in powers of z^-1.
-        var b: [Double] = [1]
-        var a: [Double] = [1]
-        for c in coefficients {
-            b = multiply(b, [c.b0, c.b1, c.b2])
-            a = multiply(a, [1, c.a1, c.a2])
+        // Inside the stability triangle, every section's poles are inside the unit circle.
+        guard coefficients.allSatisfy({ abs($0.a2) < 1 && abs($0.a1) < 1 + $0.a2 }) else { return .infinity }
+
+        let n = 2 * coefficients.count
+        var a = [[Double]](repeating: [Double](repeating: 0, count: n), count: n)
+        var b = [Double](repeating: 0, count: n)
+        var c = [Double](repeating: 0, count: n) // Together with d, gives the output of the sections so far.
+        var d = 1.0
+        for (section, q) in coefficients.enumerated() {
+            let i = 2 * section
+            // Transposed direct form II, with the section's output substituted into its state updates.
+            let p1 = q.b1 - q.a1 * q.b0
+            let p2 = q.b2 - q.a2 * q.b0
+            for j in 0..<n {
+                a[i][j] = p1 * c[j]
+                a[i + 1][j] = p2 * c[j]
+            }
+            a[i][i] -= q.a1
+            a[i][i + 1] += 1
+            a[i + 1][i] -= q.a2
+            b[i] = p1 * d
+            b[i + 1] = p2 * d
+            for j in 0..<n {
+                c[j] *= q.b0
+            }
+            c[i] += 1
+            d *= q.b0
         }
-        return astromIntegral(numerator: b, denominator: a)
+
+        var p = b.map { x in b.map { x * $0 } }
+        var power = a
+        for _ in 0..<64 where power.joined().contains(where: { abs($0) > 1e-20 }) {
+            let added = multiply(multiply(power, p), transpose(power))
+            for i in 0..<n {
+                for j in 0..<n {
+                    p[i][j] += added[i][j]
+                }
+            }
+            power = multiply(power, power)
+        }
+
+        var gain = d * d
+        for i in 0..<n {
+            for j in 0..<n {
+                gain += c[i] * p[i][j] * c[j]
+            }
+        }
+        return gain
     }
 
-    private static func multiply(_ x: [Double], _ y: [Double]) -> [Double] {
-        var result = [Double](repeating: 0, count: x.count + y.count - 1)
+    private static func multiply(_ x: [[Double]], _ y: [[Double]]) -> [[Double]] {
+        var result = x.map { $0.map { _ in 0.0 } }
         for i in x.indices {
-            for j in y.indices {
-                result[i + j] += x[i] * y[j]
+            for k in y.indices {
+                for j in y[k].indices {
+                    result[i][j] += x[i][k] * y[k][j]
+                }
             }
         }
         return result
     }
 
-    /// Sum of h[n]^2 for H(z) = B(z)/A(z), both given in powers of z^-1 and the same length after padding.
-    static func astromIntegral(numerator: [Double], denominator: [Double]) -> Double {
-        let n = max(numerator.count, denominator.count) - 1
-        var a = denominator + [Double](repeating: 0, count: n + 1 - denominator.count)
-        var b = numerator + [Double](repeating: 0, count: n + 1 - numerator.count)
-        var sum = 0.0
-        var k = n
-        while k > 0 {
-            guard a[0] > 0 else { return .infinity }
-            let alpha = a[k] / a[0]
-            let beta = b[k] / a[0]
-            sum += beta * b[k]
-            var nextA = [Double](repeating: 0, count: k)
-            var nextB = [Double](repeating: 0, count: k)
-            for i in 0..<k {
-                nextA[i] = a[i] - alpha * a[k - i]
-                nextB[i] = b[i] - beta * a[k - i]
-            }
-            a = nextA
-            b = nextB
-            k -= 1
-        }
-        guard a[0] > 0 else { return .infinity }
-        return sum + b[0] * b[0] / a[0]
+    private static func transpose(_ x: [[Double]]) -> [[Double]] {
+        x.indices.map { j in x.indices.map { i in x[i][j] } }
     }
 }

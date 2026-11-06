@@ -87,7 +87,7 @@ final class ReviewFixesTests: XCTestCase {
         // No sudden spike while the new notch fades in, and the tone is gone by the end.
         XCTAssertLessThan(x.map { abs($0) }.max()!, 1.5)
         XCTAssertLessThan(rms(x[(x.count * 3 / 4)...]), 0.001)
-        XCTAssertEqual(bank.activeSectionCount(channel: 0), 8)
+        XCTAssertEqual(bank.activeSectionCount(channel: 0), 4) // One notch is four biquads.
     }
 
     func testBankToggleFadesToTheOriginal() {
@@ -112,7 +112,8 @@ final class ReviewFixesTests: XCTestCase {
     // MARK: Live processor
 
     func testLiveProcessorUsesEachEarAndCombinesForMono() {
-        let pitches = EarPitches(left: 3000, right: 6000)
+        // Two octaves apart, so the one-octave notches stay separate instead of merging into one band.
+        let pitches = EarPitches(left: 1500, right: 6000)
         let stereo = LiveNotchProcessor.makeUpdate(.init(pitches: pitches, minimumWidthOctaves: 1), sampleRate: sampleRate, channelCount: 2)
         XCTAssertEqual(stereo.channels[0], pitches.notch(for: .left, widthOctaves: 1, sampleRate: sampleRate))
         XCTAssertEqual(stereo.channels[1], pitches.notch(for: .right, widthOctaves: 1, sampleRate: sampleRate))

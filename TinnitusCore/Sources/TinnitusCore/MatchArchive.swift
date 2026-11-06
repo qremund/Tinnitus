@@ -15,6 +15,10 @@ public enum MatchArchive {
         var items: [Item]
     }
 
+    private struct VersionOnly: Decodable {
+        var version: Int
+    }
+
     /// Everything saved, in one file, for backing up.
     public struct Export: Codable, Equatable, Sendable {
         public var version: Int
@@ -55,7 +59,6 @@ public enum MatchArchive {
             guard envelope.version <= currentVersion else { throw ReadError.newerVersion(envelope.version) }
             return envelope.items
         }
-        struct VersionOnly: Decodable { var version: Int }
         if let header = try? decoder.decode(VersionOnly.self, from: data), header.version > currentVersion {
             throw ReadError.newerVersion(header.version)
         }

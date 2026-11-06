@@ -90,6 +90,7 @@ struct EarPicker: View {
     }
 }
 
+@MainActor
 enum TunerText {
     static func loudness(_ model: TunerModel) -> String {
         if let threshold = model.knownThresholdDBFS {
