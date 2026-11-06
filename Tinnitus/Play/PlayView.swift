@@ -85,7 +85,7 @@ struct PlayView: View {
             Label {
                 VStack(alignment: .leading) {
                     if pitches.isSameInBothEars {
-                        Text(player.filterEnabled ? "Removing \(Format.earNotch(pitches.left, widthOctaves: notchWidthOctaves))" : "Notch off (A/B comparison)")
+                        Text(player.filterEnabled ? "Removing \(Format.earNotch(pitches.leftNotches, minimumWidthOctaves: notchWidthOctaves))" : "Notch off (A/B comparison)")
                             .font(.headline)
                         Text("Both ears, centered on your \(Format.pitches(pitches.left)) match\(pitches.left.count == 1 ? "" : "es")")
                             .font(.callout)
@@ -93,7 +93,7 @@ struct PlayView: View {
                     } else {
                         Text(player.filterEnabled ? "A separate notch in each ear" : "Notch off (A/B comparison)")
                             .font(.headline)
-                        Text("Left: \(Format.earNotch(pitches.left, widthOctaves: notchWidthOctaves))\nRight: \(Format.earNotch(pitches.right, widthOctaves: notchWidthOctaves))")
+                        Text("Left: \(Format.earNotch(pitches.leftNotches, minimumWidthOctaves: notchWidthOctaves))\nRight: \(Format.earNotch(pitches.rightNotches, minimumWidthOctaves: notchWidthOctaves))")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }

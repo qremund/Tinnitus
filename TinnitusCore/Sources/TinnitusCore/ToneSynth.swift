@@ -64,7 +64,7 @@ public final class ToneSynth {
         let sectionWidth = max(bandwidth, 1.0 / 64) / cascadeNarrowing
         let section = BiquadCoefficients.bandPass(centerHz: p.frequencyHz, bandwidthOctaves: sectionWidth, sampleRate: sampleRate)
         let coefficients = Array(repeating: section, count: bandPassSections)
-        let power = BiquadCascade(coefficients).whiteNoisePowerGain()
+        let power = BiquadCascade.whiteNoisePowerGain(of: coefficients)
         return Configuration(parameters: p, bandPass: coefficients, noiseNormalization: 1 / max(power, 1e-12).squareRoot())
     }
 
@@ -80,9 +80,13 @@ public final class ToneSynth {
     public init(sampleRate: Double, configuration: Configuration) {
         self.sampleRate = sampleRate
         self.configuration = configuration
-        filter = BiquadCascade(configuration.bandPass)
         // About a 20 ms fade for every level, ear, and start/stop change.
         smoothing = 1 - exp(-1 / (0.02 * sampleRate))
+        // Always two sections, so switching between tone and noise never reallocates on the audio thread.
+        let sections = configuration.bandPass.count == Self.bandPassSections
+            ? configuration.bandPass
+            : Array(repeating: .identity, count: Self.bandPassSections)
+        filter = BiquadCascade(sections)
     }
 
     /// True once a stopped sound has faded out, so a mixer can skip rendering it.
@@ -90,12 +94,28 @@ public final class ToneSynth {
         !configuration.parameters.isPlaying && leftGain < 1e-6 && rightGain < 1e-6
     }
 
+    /// Takes new settings. Safe on the audio thread. Swaps the old settings into `newConfiguration`,
+    /// so the caller can release them off the audio thread.
+    public func apply(_ newConfiguration: inout Configuration) {
+        swap(&configuration, &newConfiguration)
+        // A pure tone doesn't use the filter, so its settings are left alone until noise needs them.
+        if configuration.bandPass.count == Self.bandPassSections {
+            filter.setCoefficients(configuration.bandPass)
+        }
+    }
+
+    /// Takes new settings. For use off the audio thread, such as in tests.
     public func apply(_ newConfiguration: Configuration) {
-        configuration = newConfiguration
-        filter.setCoefficients(newConfiguration.bandPass)
+        var copy = newConfiguration
+        apply(&copy)
     }
 
     public func render(left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>?, frameCount: Int) {
+        if isSilent {
+            left.update(repeating: 0, count: frameCount)
+            right?.update(repeating: 0, count: frameCount)
+            return
+        }
         let p = configuration.parameters
         let amplitude = p.isPlaying ? Decibels.amplitude(fromDB: p.levelDBFS) : 0
         let targetLeft = p.ear == .right ? 0 : amplitude
