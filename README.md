@@ -1,6 +1,6 @@
 # Tinnitus
 
-A personal iPhone app that measures the pitch, width, and loudness of your tinnitus, then plays sleep sounds with that frequency band notched out.
+A personal iPhone app that measures the pitch, width, and loudness of your tinnitus, then plays sleep sounds or your own music with that frequency band notched out.
 
 This is a personal tool, not a medical device.
 
@@ -16,6 +16,10 @@ This is a personal tool, not a medical device.
 3. Plug in your iPhone, select it as the run destination, and press Run. The first time, approve the developer on the phone under Settings > General > VPN & Device Management.
 
 With a free Apple ID the app stops opening after 7 days. Run it from Xcode again to reinstall.
+
+## Music
+
+The Music tab plays songs you add from the Files app or from your Music library (songs you bought or synced). Each song is rendered once through the notch and cached, then the original and filtered copies play in sync so the notch toggle crossfades instantly. Apple Music streams and downloads are copy protected, so no app can filter them.
 
 ## Tests
 

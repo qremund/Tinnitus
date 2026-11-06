@@ -15,6 +15,12 @@ enum Format {
     static func level(_ db: Double) -> String {
         "\(Int(db.rounded())) dB"
     }
+
+    /// Minutes and seconds, like 3:07.
+    static func duration(_ seconds: TimeInterval) -> String {
+        let total = Int(max(seconds, 0).rounded(.down))
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
 }
 
 extension Ear {

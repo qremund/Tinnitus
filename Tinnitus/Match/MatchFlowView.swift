@@ -5,6 +5,7 @@ struct MatchFlowView: View {
     @Environment(TestToneEngine.self) private var audio
     @Environment(ProfileStore.self) private var store
     @Environment(SleepPlayer.self) private var player
+    @Environment(MusicPlayer.self) private var music
     @State private var model: MatchModel?
     @State private var savedMessage: String?
 
@@ -29,8 +30,9 @@ struct MatchFlowView: View {
             }
         }
         .onAppear {
-            // Sleep sounds would drown out the test tones.
+            // Sleep sounds and music would drown out the test tones.
             player.pause()
+            music.pause()
             if model == nil {
                 model = MatchModel(audio: audio)
             }

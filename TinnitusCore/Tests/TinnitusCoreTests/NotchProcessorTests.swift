@@ -1,0 +1,58 @@
+import XCTest
+@testable import TinnitusCore
+
+final class NotchProcessorTests: XCTestCase {
+    let sampleRate = 44_100.0
+
+    /// RMS of a sine after the processor, skipping the start so the filter has settled.
+    private func filteredRMS(hz: Double, processor: inout NotchProcessor, blockSize: Int = 4096) -> Double {
+        let total = Int(sampleRate)
+        var samples = (0..<total).map { Float(sin(2 * Double.pi * hz * Double($0) / sampleRate)) }
+        samples.withUnsafeMutableBufferPointer { buffer in
+            var start = 0
+            while start < total {
+                let count = min(blockSize, total - start)
+                processor.process(buffer.baseAddress! + start, frameCount: count, channel: 0)
+                start += count
+            }
+        }
+        let tail = samples[(total / 2)...]
+        return sqrt(tail.reduce(0) { $0 + Double($1 * $1) } / Double(tail.count))
+    }
+
+    func testRemovesCenterAndPassesMusicBand() {
+        var notched = NotchProcessor.forTinnitus(centerHz: 3000, widthOctaves: 1, sampleRate: sampleRate, channelCount: 1)
+        XCTAssertLessThan(filteredRMS(hz: 3000, processor: &notched), 0.001)
+
+        var passed = NotchProcessor.forTinnitus(centerHz: 3000, widthOctaves: 1, sampleRate: sampleRate, channelCount: 1)
+        XCTAssertEqual(filteredRMS(hz: 440, processor: &passed), 1 / 2.0.squareRoot(), accuracy: 0.01)
+    }
+
+    func testBlockSizeDoesNotChangeOutput() {
+        var small = NotchProcessor.forTinnitus(centerHz: 3000, widthOctaves: 0.5, sampleRate: sampleRate, channelCount: 1)
+        var large = NotchProcessor.forTinnitus(centerHz: 3000, widthOctaves: 0.5, sampleRate: sampleRate, channelCount: 1)
+        XCTAssertEqual(
+            filteredRMS(hz: 2500, processor: &small, blockSize: 333),
+            filteredRMS(hz: 2500, processor: &large, blockSize: 32_768),
+            accuracy: 1e-6
+        )
+    }
+
+    func testChannelsAreIndependent() {
+        var processor = NotchProcessor.forTinnitus(centerHz: 3000, widthOctaves: 1, sampleRate: sampleRate, channelCount: 2)
+        var left = [Float](repeating: 0, count: 256)
+        var right = [Float](repeating: 0, count: 256)
+        left[0] = 1
+        left.withUnsafeMutableBufferPointer { processor.process($0.baseAddress!, frameCount: 256, channel: 0) }
+        right.withUnsafeMutableBufferPointer { processor.process($0.baseAddress!, frameCount: 256, channel: 1) }
+        XCTAssertTrue(right.allSatisfy { $0 == 0 })
+        XCTAssertNotEqual(left[1], 0)
+    }
+
+    func testEmptyNotchPassesThrough() {
+        var processor = NotchProcessor(channelCount: 1, coefficients: [])
+        var samples: [Float] = [0.5, -0.25, 1]
+        samples.withUnsafeMutableBufferPointer { processor.process($0.baseAddress!, frameCount: 3, channel: 0) }
+        XCTAssertEqual(samples, [0.5, -0.25, 1])
+    }
+}
