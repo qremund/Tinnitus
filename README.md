@@ -19,7 +19,11 @@ With a free Apple ID the app stops opening after 7 days. Run it from Xcode again
 
 ## Music
 
-The Music tab plays songs you add from the Files app or from your Music library (songs you bought or synced). Each song is rendered once through the notch and cached, then the original and filtered copies play in sync so the notch toggle crossfades instantly. Apple Music streams and downloads are copy protected, so no app can filter them.
+The Music tab plays songs you add from the Files app or from your Music library (songs you bought or synced). Songs are filtered live as they play, through an audio processing tap, so they start at once and profile changes take effect immediately. Mono songs get both ears' notches. Apple Music streams and downloads are copy protected, so no app can filter them.
+
+## Notches
+
+Each notch is as wide as the matched sound plus 1/2 octave, and never narrower than the width chosen on the Profile tab (1 or 1/2 octave). Automatic mode groups each ear's six newest matches by pitch (within 1/2 octave) and notches the median of each group's newest three, so two different pitches each get their own notch.
 
 ## Tests
 
