@@ -75,6 +75,11 @@ public enum MatchPalette {
 
     /// The removed bands in the notch diagrams.
     public static let notch = RGB(hue: widthHue, saturation: 0.65, lightness: 0.55)
+
+    /// On the match screen: a saved match's notch.
+    public static let savedNotch = RGB(hex: 0x4C55C9)
+    /// On the match screen: a new match, or a saved one with changes that aren't saved yet.
+    public static let unsavedNotch = RGB(hex: 0xD9480F)
 }
 
 /// The log frequency axis shared by every notch diagram: 250 Hz at the left edge, 16 kHz at the right.

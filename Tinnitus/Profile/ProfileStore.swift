@@ -155,6 +155,45 @@ final class ProfileStore {
         saveMatchProfiles()
     }
 
+    /// Saves edits to a match in one profile. Other profiles that use the match keep the old
+    /// version: if there are any, the edit is saved as a new match that takes the old one's place
+    /// in this profile only. Returns the edited match's id, or why it couldn't be saved.
+    func update(_ matchID: UUID, to edited: TinnitusProfile, in profileID: UUID) -> Result<UUID, EditProblem> {
+        guard let p = matchProfiles.firstIndex(where: { $0.id == profileID }),
+              matchProfiles[p].contains(matchID),
+              let m = profiles.firstIndex(where: { $0.id == matchID }) else {
+            return .failure(EditProblem(message: "That match is no longer in this profile."))
+        }
+        let candidate = matches(in: matchProfiles[p]).map { $0.id == matchID ? edited : $0 }
+        let ears = EarProfiles.combining(candidate, sameForBothEars: sameForBothEars)
+        let limit = NotchDesign.maxNotchesPerEar
+        let leftFull = ears.left.count > limit
+        let rightFull = ears.right.count > limit
+        if leftFull || rightFull {
+            let side = leftFull && rightFull ? "each ear" : leftFull ? "your left ear" : "your right ear"
+            return .failure(EditProblem(message: "\(matchProfiles[p].name) already has \(limit) matches for \(side). Take one out first, or change the ear back."))
+        }
+        let shared = matchProfiles.contains { $0.id != profileID && $0.contains(matchID) }
+        if shared {
+            var copy = edited
+            copy.id = UUID()
+            profiles.insert(copy, at: 0)
+            matchProfiles[p].matchIDs = matchProfiles[p].matchIDs.map { $0 == matchID ? copy.id : $0 }
+            save()
+            saveMatchProfiles()
+            return .success(copy.id)
+        }
+        var updated = edited
+        updated.id = matchID
+        profiles[m] = updated
+        save()
+        return .success(matchID)
+    }
+
+    struct EditProblem: Error {
+        var message: String
+    }
+
     /// A default name for the next profile.
     var nextProfileName: String {
         var n = matchProfiles.count + 1

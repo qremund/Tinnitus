@@ -17,6 +17,10 @@ This is a personal tool, not a medical device.
 
 With a free Apple ID the app stops opening after 7 days. Run it from Xcode again to reinstall.
 
+## Matching
+
+The Match tab has four layouts of the same tuner (sliders, a pitch and width pad, a draggable band, and dials). Under the controls, Left and Right diagrams show the active profile's notches. Tap a notch to load that match into the controls; tap again where notches overlap to step to the next one. Play turns the selected match on or off, and each match keeps its own on or off state, so several can play together at their saved settings while the selected one follows the controls. New starts a new match. Saving an edited match runs the faintest-level check again with only that match playing, and changes it in the active profile only: other profiles that use it keep the earlier version.
+
 ## Music
 
 The Music tab plays songs you add from the Files app or from your Music library (songs you bought or synced). Songs are filtered live as they play, through an audio processing tap, so they start at once and profile changes take effect immediately. Mono songs get both ears' notches. Apple Music streams and downloads are copy protected, so no app can filter them.

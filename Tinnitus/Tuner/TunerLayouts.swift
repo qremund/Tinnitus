@@ -7,13 +7,13 @@ struct SlidersLayout: View {
     @Bindable var model: TunerModel
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             TunerCard {
                 HStack(alignment: .firstTextBaseline) {
                     TunerLabel(title: "Pitch")
                     Spacer()
                     Text(Format.frequency(model.pitchHz))
-                        .font(.title2.bold().monospacedDigit())
+                        .font(.title3.bold().monospacedDigit())
                 }
                 Slider(value: $model.pitchPosition) {
                     Text("Pitch")
@@ -70,11 +70,11 @@ struct PadLayout: View {
     @Bindable var model: TunerModel
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             HStack(alignment: .bottom) {
                 VStack(alignment: .leading, spacing: 2) {
                     TunerLabel(title: "Pitch")
-                    Text(Format.frequency(model.pitchHz)).font(.title.bold().monospacedDigit())
+                    Text(Format.frequency(model.pitchHz)).font(.title2.bold().monospacedDigit())
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {
@@ -121,7 +121,7 @@ struct PadLayout: View {
                 })
                 .modifier(PitchAccessibility(model: model))
             }
-            .frame(minHeight: 220)
+            .frame(height: 150)
 
             PitchNudgeRow(model: model)
             WidthNudgeRow(model: model)
@@ -152,9 +152,9 @@ struct BandLayout: View {
     @State private var dragMode: DragMode?
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             Text("Drag the band sideways for pitch and up or down for loudness. Drag its edges for width.")
-                .font(.callout)
+                .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -236,7 +236,7 @@ struct BandLayout: View {
                 )
                 .modifier(PitchAccessibility(model: model))
             }
-            .frame(minHeight: 220)
+            .frame(height: 150)
 
             HStack(spacing: 8) {
                 tile("Pitch", Format.frequency(model.pitchHz))
@@ -254,7 +254,8 @@ struct BandLayout: View {
             Text(title).font(.caption).foregroundStyle(.secondary)
             Text(value).font(.headline.monospacedDigit()).lineLimit(1).minimumScaleFactor(0.7)
         }
-        .padding(10)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
         .accessibilityElement(children: .combine)
@@ -267,9 +268,9 @@ struct DialLayout: View {
     @Bindable var model: TunerModel
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             HStack(alignment: .top, spacing: 12) {
-                VStack(spacing: 10) {
+                VStack(spacing: 6) {
                     TunerLabel(title: "Pitch")
                     TunerDial(
                         fraction: $model.pitchPosition,
@@ -286,7 +287,7 @@ struct DialLayout: View {
                         ("+", "Raise pitch slightly", { model.nudgePitch(semitones: 0.25) }),
                     ])
                 }
-                VStack(spacing: 10) {
+                VStack(spacing: 6) {
                     TunerLabel(title: "Width")
                     TunerDial(
                         fraction: $model.widthPosition,
@@ -324,11 +325,11 @@ struct DialLayout: View {
     }
 
     private func grid(_ buttons: [(String, String, () -> Void)]) -> some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
             ForEach(buttons.indices, id: \.self) { index in
                 let button = buttons[index]
                 Button(action: button.2) {
-                    Text(button.0).font(.title3.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
+                    Text(button.0).font(.callout.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 30)
                 }
                 .buttonStyle(.bordered)
                 .accessibilityLabel(button.1)
@@ -389,5 +390,6 @@ struct TunerDial: View {
             }
         }
         .aspectRatio(1, contentMode: .fit)
+        .frame(maxWidth: 130)
     }
 }
