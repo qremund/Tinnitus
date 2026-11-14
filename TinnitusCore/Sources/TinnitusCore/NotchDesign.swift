@@ -14,14 +14,22 @@ public enum NotchDesign {
     /// The most separate notches in one ear. Each is 4 biquads, so this bounds the work per sample.
     public static let maxNotchesPerEar = 4
 
-    /// How much wider than the matched sound each notch is, so the edges of a hiss are cut deeply
-    /// and not just by the 3 dB at the filter's edges.
+    /// The most a notch is wider than its matched sound. Wide matches stop here so the notch doesn't
+    /// take out far more than the tinnitus.
     public static let widthMarginOctaves = 0.5
 
-    /// Notch width for a match: the matched width plus the margin, and never narrower than `minimumOctaves`
-    /// (the width chosen on the Profile tab).
+    /// The narrowest notch at all, used by the "Follow my match" setting. It keeps a pure tone notched
+    /// when its pitch drifts a little from the match.
+    public static let followMatchMinimumOctaves = 1.0 / 6
+
+    /// Notch width for a match: twice the matched width, so the band's own edges are cut about 24 dB
+    /// and not just by the 3 dB at the filter's edges, but at most the matched width plus
+    /// `widthMarginOctaves`. Never narrower than `minimumOctaves` (the width chosen on the Profile tab)
+    /// or `followMatchMinimumOctaves`.
     public static func notchWidth(matchedOctaves: Double, minimumOctaves: Double) -> Double {
-        max(minimumOctaves, max(matchedOctaves, 0) + widthMarginOctaves)
+        let matched = max(matchedOctaves, 0)
+        let width = min(2 * matched, matched + widthMarginOctaves)
+        return max(minimumOctaves, followMatchMinimumOctaves, width)
     }
 
     /// The bands removed for notches at `centersHz`, all `widthOctaves` wide, lowest first.

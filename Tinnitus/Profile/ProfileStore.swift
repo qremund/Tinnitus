@@ -36,37 +36,52 @@ final class ProfileStore {
         load()
         loadMatchProfiles()
         migrateEarChoices()
+        ensureActiveProfile()
     }
 
-    /// Use one notch for both ears, from the newest matches of any ear.
+    /// Every match notches both ears, whichever ear it was for.
     var sameForBothEars = UserDefaults.standard.bool(forKey: "sameNotchBothEars") {
         didSet { UserDefaults.standard.set(sameForBothEars, forKey: "sameNotchBothEars") }
     }
 
-    /// Named sets of matches. Play, Music, and the match screens all use the active one.
+    /// Named sets of matches. Play, Music, and the match screens all use the active one. Never empty
+    /// after launch: there is always at least one profile, and one of them is active.
     private(set) var matchProfiles: [MatchProfile] = []
 
-    /// The profile Play and Music use. Nil means automatic: the median of recent matches.
+    /// The profile Play, Music, and the match screens use.
     var activeProfileID = UserDefaults.standard.string(forKey: "activeMatchProfile").flatMap(UUID.init(uuidString:)) {
         didSet { UserDefaults.standard.set(activeProfileID?.uuidString, forKey: "activeMatchProfile") }
     }
 
-    var activeProfile: MatchProfile? {
-        activeProfileID.flatMap { id in matchProfiles.first { $0.id == id } }
+    var activeProfile: MatchProfile {
+        activeProfileID.flatMap { id in matchProfiles.first { $0.id == id } } ?? matchProfiles.first ?? MatchProfile(name: nextProfileName)
     }
 
-    /// Each ear's notches: every match in the active profile, or with no profile the median of that
-    /// ear's last three matches, which is steadier than any single match.
-    var ears: EarProfiles {
-        if let profile = activeProfile {
-            return ears(for: profile)
+    /// Each ear's notches: every match in the active profile.
+    var ears: EarProfiles { ears(for: activeProfile) }
+
+    /// Saved matches in list order: left, right, then both ears; lowest pitch, then narrowest width.
+    var sortedMatches: [TinnitusProfile] { profiles.sorted(by: TinnitusProfile.displayOrder) }
+
+    /// Makes sure a profile is active. Earlier versions had an Automatic mode (no profile, the median
+    /// of recent matches). Anyone still on it gets a profile of their newest matches, up to the
+    /// per-ear limit, so their notches stay close to what they had. With no profiles at all, an
+    /// empty one is made.
+    private func ensureActiveProfile() {
+        let defaults = UserDefaults.standard
+        let migratedKey = "automaticModeRemoved"
+        defer { defaults.set(true, forKey: migratedKey) }
+        if let id = activeProfileID, matchProfiles.contains(where: { $0.id == id }) { return }
+        if !defaults.bool(forKey: migratedKey), activeProfileID == nil, !profiles.isEmpty {
+            let picks = EarProfiles.newestFitting(profiles, sameForBothEars: sameForBothEars)
+            createProfile(named: nextProfileName, matchIDs: picks.map(\.id))
+            return
         }
-        return automaticEars
-    }
-
-    /// The recent medians, ignoring any profile.
-    var automaticEars: EarProfiles {
-        EarProfiles.from(profiles, sameForBothEars: sameForBothEars)
+        if let first = matchProfiles.first {
+            activeProfileID = first.id
+        } else {
+            createProfile(named: nextProfileName)
+        }
     }
 
     /// A profile's matches in the order they were added. Matches that were deleted are skipped.
@@ -109,10 +124,15 @@ final class ProfileStore {
         saveMatchProfiles()
     }
 
-    /// Deletes the profile only. Its matches stay saved.
+    /// Deletes the profile only. Its matches stay saved. Deleting the last profile leaves a new,
+    /// empty one, so there is always a profile in use.
     func deleteProfile(_ id: UUID) {
         matchProfiles.removeAll { $0.id == id }
-        if activeProfileID == id { activeProfileID = nil }
+        if matchProfiles.isEmpty {
+            createProfile(named: nextProfileName)
+        } else if activeProfileID == id {
+            activeProfileID = matchProfiles.first?.id
+        }
         saveMatchProfiles()
     }
 
@@ -165,6 +185,13 @@ final class ProfileStore {
         }
         save()
         saveMatchProfiles()
+    }
+
+    /// Deletes matches by id, for lists shown in a different order than `profiles`.
+    func delete(ids: [UUID]) {
+        let offsets = IndexSet(ids.compactMap { id in profiles.firstIndex { $0.id == id } })
+        guard !offsets.isEmpty else { return }
+        delete(at: offsets)
     }
 
     /// Profiles a delete of these matches would change, for the confirmation.

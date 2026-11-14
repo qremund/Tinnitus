@@ -14,73 +14,74 @@ final class EarProfilesTests: XCTestCase {
         )
     }
 
-    func testEachEarUsesItsOwnMatches() {
-        let profiles = [profile(4000, .left, daysAgo: 0), profile(6000, .right, daysAgo: 1)]
-        let ears = EarProfiles.from(profiles, sameForBothEars: false)
-        XCTAssertEqual(ears.pitches, EarPitches(left: 4000, right: 6000))
-        XCTAssertFalse(ears.pitches.isSameInBothEars)
-    }
-
-    func testBothEarMatchesCountForEachEar() {
-        let profiles = [profile(4000, .left, daysAgo: 0), profile(5000, .both, daysAgo: 1), profile(4200, .left, daysAgo: 2)]
-        let ears = EarProfiles.from(profiles, sameForBothEars: false)
-        // Left: median of 4000, 5000, 4200. Right: only the "both" match.
-        XCTAssertEqual(ears.left.first!.centerFrequencyHz, 4200, accuracy: 0.001)
-        XCTAssertEqual(ears.right.first!.centerFrequencyHz, 5000, accuracy: 0.001)
-    }
-
     func testEarWithoutMatchesIsUnfiltered() {
-        let ears = EarProfiles.from([profile(4000, .left, daysAgo: 0)], sameForBothEars: false)
+        let ears = EarProfiles.combining([profile(4000, .left, daysAgo: 0)], sameForBothEars: false)
         XCTAssertEqual(ears.pitches, EarPitches(left: 4000, right: nil))
         XCTAssertTrue(ears.pitches.notch(for: .right, widthOctaves: 1, sampleRate: 44_100).isEmpty)
     }
 
-    func testSameForBothEarsUsesNewestThreeOfAnyEar() {
-        let profiles = [
-            profile(4000, .left, daysAgo: 0),
-            profile(6000, .right, daysAgo: 1),
-            profile(5000, .both, daysAgo: 2),
-            profile(9000, .right, daysAgo: 3),
-        ]
-        let ears = EarProfiles.from(profiles, sameForBothEars: true)
-        // 4, 5, and 6 kHz are one pitch (median 5 kHz); 9 kHz is far enough away to get its own notch.
-        XCTAssertEqual(ears.left.count, 2)
-        XCTAssertEqual(ears.left[0].centerFrequencyHz, 5000, accuracy: 0.001)
-        XCTAssertEqual(ears.left[1].centerFrequencyHz, 9000, accuracy: 0.001)
-        XCTAssertEqual(ears.left, ears.right)
+    func testAutomaticBecomesTheNewestMatchesThatFit() {
+        // Five left matches and one both-ear match: the newest four that fit the left ear, plus the
+        // both-ear match only if the left ear still has room.
+        var matches = (0..<5).map { profile(3000 + Double($0) * 500, .left, daysAgo: Double($0)) }
+        matches.append(profile(9000, .both, daysAgo: 10))
+        matches.append(profile(7000, .right, daysAgo: 11))
+        let picked = EarProfiles.newestFitting(matches, sameForBothEars: false)
+        XCTAssertEqual(picked.map(\.centerFrequencyHz), [3000, 3500, 4000, 4500, 7000])
+        let ears = EarProfiles.combining(picked, sameForBothEars: false)
+        XCTAssertEqual(ears.left.count, 4)
+        XCTAssertEqual(ears.right.count, 1)
     }
 
-    func testOnlyNewestThreeOfAPitchCount() {
-        let profiles = [
-            profile(4000, .left, daysAgo: 0),
-            profile(4100, .left, daysAgo: 1),
-            profile(4200, .left, daysAgo: 2),
-            profile(3000, .left, daysAgo: 3),
-        ]
-        // 3 kHz is within half an octave of 4 kHz, so it's the same pitch, but only the newest three count.
-        let left = EarProfiles.from(profiles, sameForBothEars: false).left
-        XCTAssertEqual(left.count, 1)
-        XCTAssertEqual(left[0].centerFrequencyHz, 4100, accuracy: 0.001)
+    func testNewestFittingWithSameNotchCountsEveryMatchInBothEars() {
+        let matches = (0..<6).map { profile(2000 + Double($0) * 1000, $0.isMultiple(of: 2) ? .left : .right, daysAgo: Double($0)) }
+        XCTAssertEqual(EarProfiles.newestFitting(matches, sameForBothEars: true).count, 4)
+        XCTAssertEqual(EarProfiles.newestFitting(matches, sameForBothEars: false).count, 6)
     }
 
-    func testTwoPitchesInOneEarEachGetANotch() {
-        // A 4 kHz tone and an 8 kHz tone, matched on alternate days. One median would land near 5.7 kHz.
-        let profiles = [
-            profile(4000, .left, daysAgo: 0),
-            profile(8000, .left, daysAgo: 1),
-            profile(4100, .left, daysAgo: 2),
-            profile(7900, .left, daysAgo: 3),
+    func testSavedMatchesSortByEarThenPitchThenWidth() {
+        var wide = profile(3000, .left, daysAgo: 0)
+        wide.bandwidthOctaves = 0.5
+        let narrow = profile(3000, .left, daysAgo: 1)
+        let matches = [
+            profile(2000, .both, daysAgo: 0),
+            profile(5000, .right, daysAgo: 0),
+            wide,
+            profile(8000, .left, daysAgo: 0),
+            narrow,
+            profile(1000, .right, daysAgo: 0),
         ]
-        let left = EarProfiles.from(profiles, sameForBothEars: false).left.map(\.centerFrequencyHz)
-        XCTAssertEqual(left.count, 2)
-        XCTAssertEqual(left[0], (4000 * 4100).squareRoot(), accuracy: 0.01)
-        XCTAssertEqual(left[1], (8000 * 7900).squareRoot(), accuracy: 0.01)
+        let sorted = matches.sorted(by: TinnitusProfile.displayOrder)
+        XCTAssertEqual(sorted.map(\.ear), [.left, .left, .left, .right, .right, .both])
+        XCTAssertEqual(sorted.map(\.centerFrequencyHz), [3000, 3000, 8000, 1000, 5000, 2000])
+        XCTAssertEqual(sorted[0].bandwidthOctaves, 0)
+        XCTAssertEqual(sorted[1].bandwidthOctaves, 0.5)
     }
 
-    func testOnlyRecentMatchesCountInAutomatic() {
-        var profiles = (0..<EarProfiles.automaticRecentMatches).map { profile(4000 + Double($0), .left, daysAgo: Double($0)) }
-        profiles.append(profile(12_000, .left, daysAgo: 30))
-        XCTAssertEqual(EarProfiles.from(profiles, sameForBothEars: false).left.count, 1)
+    func testPaletteShadesDarkenAndTextStaysReadable() {
+        // Tile labels are bold 15 pt, which counts as large text: WCAG asks for 3:1 there. Every
+        // shade in between the samples clears it too (the worst is about 4.3:1).
+        XCTAssertGreaterThan(MatchPalette.pitch(250).luminance, MatchPalette.pitch(16_000).luminance)
+        XCTAssertGreaterThan(MatchPalette.width(0).luminance, MatchPalette.width(1.0 / 32).luminance)
+        XCTAssertGreaterThan(MatchPalette.width(1.0 / 32).luminance, MatchPalette.width(1).luminance)
+        for hz in [250.0, 500, 1000, 2000, 4000, 8000, 16_000] {
+            let c = MatchPalette.pitch(hz)
+            XCTAssertGreaterThanOrEqual(c.contrast(with: c.readableText), 3, "pitch \(hz)")
+        }
+        for octaves in [0, 1.0 / 32, 1.0 / 16, 1.0 / 8, 1.0 / 4, 1.0 / 2, 1] {
+            let c = MatchPalette.width(octaves)
+            XCTAssertGreaterThanOrEqual(c.contrast(with: c.readableText), 3, "width \(octaves)")
+        }
+        for ear in Ear.allCases {
+            let c = MatchPalette.ear(ear)
+            XCTAssertGreaterThanOrEqual(c.contrast(with: c.readableText), 4.5, "ear \(ear)")
+        }
+    }
+
+    func testNotchScaleEnds() {
+        XCTAssertEqual(NotchScale.position(250), 0, accuracy: 1e-12)
+        XCTAssertEqual(NotchScale.position(16_000), 1, accuracy: 1e-12)
+        XCTAssertEqual(NotchScale.position(2000), 0.5, accuracy: 1e-12)
     }
 
     func testMatchWidthWidensItsNotch() {
@@ -99,11 +100,6 @@ final class EarProfilesTests: XCTestCase {
         XCTAssertEqual(matches.count, 1)
         XCTAssertNil(matches[0].phoneVolume)
         XCTAssertNil(matches[0].name)
-    }
-
-    func testNoProfiles() {
-        XCTAssertTrue(EarProfiles.from([], sameForBothEars: false).isEmpty)
-        XCTAssertTrue(EarProfiles.from([], sameForBothEars: true).pitches.isEmpty)
     }
 
     func testProfilePutsEachMatchInItsOwnEar() {

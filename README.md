@@ -23,7 +23,7 @@ The Music tab plays songs you add from the Files app or from your Music library 
 
 ## Notches
 
-Each notch is as wide as the matched sound plus 1/2 octave, and never narrower than the width chosen on the Profile tab (1 or 1/2 octave). Automatic mode groups each ear's six newest matches by pitch (within 1/2 octave) and notches the median of each group's newest three, so two different pitches each get their own notch.
+Each notch is twice the matched width, capped at the matched width plus 1/2 octave, and never narrower than the smallest notch chosen on the Notch Profile tab: Follow my match (the default, at least 1/6 octave), 1/2 octave, or 1 octave. There is always one active profile, a named set of up to four matches per ear, with a notch for each. (The old Automatic mode, which used the median of recent matches, is gone; anyone still on it gets a profile of their newest matches.)
 
 ## Tests
 

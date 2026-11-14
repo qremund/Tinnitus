@@ -55,7 +55,7 @@ struct TunerView: View {
 
     /// The active profile's matches, which can play alongside the test sound.
     private var profileMatches: [TinnitusProfile] {
-        store.activeProfile.map { store.matches(in: $0) } ?? []
+        store.matches(in: store.activeProfile)
     }
 
     var body: some View {
@@ -124,7 +124,7 @@ struct TunerView: View {
                 newProfileName = store.nextProfileName
                 creatingProfile = true
             }
-            if let model, store.activeProfile != nil {
+            if let model {
                 Section {
                     Toggle("Hear Its Other Matches", isOn: Binding(get: { model.hearProfile }, set: { model.hearProfile = $0 }))
                 }
@@ -132,14 +132,14 @@ struct TunerView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "square.stack.3d.up")
-                Text(store.activeProfile?.name ?? "No profile")
+                Text(store.activeProfile.name)
                     .lineLimit(1)
                     .frame(maxWidth: 80)
             }
             .font(.subheadline)
         }
         .accessibilityLabel("Profile")
-        .accessibilityValue(store.activeProfile?.name ?? "None")
+        .accessibilityValue(store.activeProfile.name)
     }
 
     @ViewBuilder
@@ -176,12 +176,13 @@ struct TunerView: View {
             get: { model.phase == .threshold },
             set: { if !$0, model.phase == .threshold { model.cancelThreshold() } }
         )) {
-            ThresholdSheet(model: model, profileName: store.activeProfile?.name) {
+            ThresholdSheet(model: model, profileName: store.activeProfile.name) {
                 let match = model.makeProfile(phoneVolume: audio.outputVolume)
                 store.add(match)
                 var added: String?
                 var problem: String?
-                if model.addToProfile, let profile = store.activeProfile {
+                if model.addToProfile {
+                    let profile = store.activeProfile
                     problem = store.load(match.id, into: profile.id)
                     if problem == nil { added = profile.name }
                 }

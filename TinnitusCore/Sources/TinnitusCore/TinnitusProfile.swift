@@ -81,6 +81,22 @@ public struct TinnitusProfile: Codable, Identifiable, Equatable, Sendable {
         return result
     }
 
+    /// List order for saved matches: left, then right, then both ears; within an ear, lowest pitch
+    /// first, then narrowest width; newest first when all three are the same.
+    public static func displayOrder(_ a: TinnitusProfile, _ b: TinnitusProfile) -> Bool {
+        func rank(_ ear: Ear) -> Int {
+            switch ear {
+            case .left: 0
+            case .right: 1
+            case .both: 2
+            }
+        }
+        if a.ear != b.ear { return rank(a.ear) < rank(b.ear) }
+        if a.centerFrequencyHz != b.centerFrequencyHz { return a.centerFrequencyHz < b.centerFrequencyHz }
+        if a.bandwidthOctaves != b.bandwidthOctaves { return a.bandwidthOctaves < b.bandwidthOctaves }
+        return a.date > b.date
+    }
+
     static func median(_ values: [Double]) -> Double {
         let sorted = values.sorted()
         let mid = sorted.count / 2
@@ -138,46 +154,17 @@ public struct EarProfiles: Equatable, Sendable {
         }
     }
 
-    /// How many of the newest matches Automatic mode looks at for each ear.
-    public static let automaticRecentMatches = 6
-    /// Matches closer than this in pitch are treated as the same sound.
-    public static let samePitchOctaves = 0.5
-
-    /// Automatic mode: each ear looks at its newest `automaticRecentMatches` matches, groups them by
-    /// pitch, and gets one median per group from that group's newest `sessions` matches. So two
-    /// different tinnitus pitches in one ear each get their own notch instead of one notch between them.
-    /// Left and right matches count for their own ear and "both" matches count for both. With
-    /// `sameForBothEars`, every match counts for both ears and the two sides get the same notches.
-    public static func from(_ profiles: [TinnitusProfile], sameForBothEars: Bool, sessions: Int = 3) -> EarProfiles {
-        let newestFirst = profiles.sorted { $0.date > $1.date }
-        if sameForBothEars {
-            let shared = medians(of: Array(newestFirst.prefix(automaticRecentMatches)), sessions: sessions)
-            return EarProfiles(left: shared, right: shared)
-        }
-        func side(_ ear: Ear) -> [TinnitusProfile] {
-            medians(of: Array(newestFirst.filter { $0.ear == ear || $0.ear == .both }.prefix(automaticRecentMatches)), sessions: sessions)
-        }
-        return EarProfiles(left: side(.left), right: side(.right))
-    }
-
-    /// Groups matches by pitch, then takes the median of each group's newest `sessions` matches.
-    static func medians(of matches: [TinnitusProfile], sessions: Int) -> [TinnitusProfile] {
-        pitchGroups(matches).compactMap { group in
-            TinnitusProfile.consensus(of: Array(group.sorted { $0.date > $1.date }.prefix(sessions)))
-        }
-    }
-
-    /// Splits matches into groups where neighbors in pitch are less than `samePitchOctaves` apart.
-    static func pitchGroups(_ matches: [TinnitusProfile]) -> [[TinnitusProfile]] {
-        var groups: [[TinnitusProfile]] = []
-        for match in matches.filter({ $0.centerFrequencyHz > 0 }).sorted(by: { $0.centerFrequencyHz < $1.centerFrequencyHz }) {
-            if let last = groups.last?.last, log2(match.centerFrequencyHz / last.centerFrequencyHz) < samePitchOctaves {
-                groups[groups.count - 1].append(match)
-            } else {
-                groups.append([match])
+    /// The newest matches that fit in one profile, newest first: each match is added only while no
+    /// ear goes over `limit`. Used to turn the old Automatic mode into a profile.
+    public static func newestFitting(_ matches: [TinnitusProfile], sameForBothEars: Bool, limit: Int = NotchDesign.maxNotchesPerEar) -> [TinnitusProfile] {
+        var chosen: [TinnitusProfile] = []
+        for match in matches.sorted(by: { $0.date > $1.date }) {
+            let candidate = combining(chosen + [match], sameForBothEars: sameForBothEars)
+            if candidate.left.count <= limit && candidate.right.count <= limit {
+                chosen.append(match)
             }
         }
-        return groups
+        return chosen
     }
 
     /// A profile's matches, each in its own ear: left and right matches in that ear, "both" matches in

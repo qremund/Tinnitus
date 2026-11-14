@@ -40,7 +40,7 @@ final class SleepPlayer {
     @ObservationIgnored private var sourceNode: AVAudioSourceNode?
     @ObservationIgnored private var renderState: MixerRenderState?
     private var notchPitches = EarPitches.none
-    @ObservationIgnored private var notchWidthOctaves = 1.0
+    @ObservationIgnored private var notchWidthOctaves = NotchDesign.followMatchMinimumOctaves
     @ObservationIgnored private var fadeGain = 1.0
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var shutdown: DispatchWorkItem?
