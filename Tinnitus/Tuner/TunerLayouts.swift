@@ -121,7 +121,7 @@ struct PadLayout: View {
                 })
                 .modifier(PitchAccessibility(model: model))
             }
-            .frame(height: 150)
+            .frame(height: 115)
 
             PitchNudgeRow(model: model)
             WidthNudgeRow(model: model)
@@ -236,7 +236,7 @@ struct BandLayout: View {
                 )
                 .modifier(PitchAccessibility(model: model))
             }
-            .frame(height: 150)
+            .frame(height: 130)
 
             HStack(spacing: 8) {
                 tile("Pitch", Format.frequency(model.pitchHz))

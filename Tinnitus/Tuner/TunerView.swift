@@ -140,7 +140,7 @@ struct TunerView: View {
 
     /// The layout's own controls, then the Left and Right diagrams.
     private func controls(_ model: TunerModel) -> some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             switch layout {
             case .sliders:
                 SlidersLayout(model: model)
@@ -159,7 +159,7 @@ struct TunerView: View {
 
     @ViewBuilder
     private func content(_ model: TunerModel) -> some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             if !audio.headphonesConnected {
                 Label("Connect your earbuds or headphones", systemImage: "exclamationmark.triangle.fill")
                     .font(.callout)

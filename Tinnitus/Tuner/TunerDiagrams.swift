@@ -53,7 +53,7 @@ struct TunerDiagrams: View {
 
     var body: some View {
         let notches = TunerNotch.all(for: model, minimumWidthOctaves: notchWidthOctaves)
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             SelectableEarDiagram(ear: .left, notches: notches.filter { $0.shows(in: .left, sameForBothEars: sameForBothEars) },
                                  selection: model.selection, onSelect: onSelect)
             SelectableEarDiagram(ear: .right, notches: notches.filter { $0.shows(in: .right, sameForBothEars: sameForBothEars) },
@@ -90,12 +90,12 @@ struct SelectableEarDiagram: View {
     let notches: [TunerNotch]
     let selection: TunerModel.Selection
     let onSelect: (TunerModel.Selection) -> Void
-    var height: CGFloat = 32
+    var height: CGFloat = 24
 
     private var title: String { ear == .right ? "Right Notch Removes" : "Left Notch Removes" }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .font(.caption2.weight(.semibold))
                 .textCase(.uppercase)
@@ -124,8 +124,8 @@ struct SelectableEarDiagram: View {
                             .offset(x: x(notch.low))
                         RoundedRectangle(cornerRadius: 1)
                             .fill(Color.primary.opacity(notch.isOn ? 0.9 : 0.4))
-                            .frame(width: 2, height: height - 12)
-                            .offset(x: x(notch.centerHz) - 1, y: 6)
+                            .frame(width: 2, height: height - 8)
+                            .offset(x: x(notch.centerHz) - 1, y: 4)
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 6))
