@@ -4,7 +4,7 @@ import TinnitusCore
 struct PlayView: View {
     @Environment(ProfileStore.self) private var store
     @Environment(SleepPlayer.self) private var player
-    @AppStorage("notchWidthOctaves") private var notchWidthOctaves = 1.0
+    @AppStorage("notchWidthOctaves") private var notchWidthOctaves = NotchDesign.followMatchMinimumOctaves
 
     private let timerChoices = [15, 30, 45, 60, 90]
     private let columns = [GridItem(.adaptive(minimum: 100), spacing: 12)]
@@ -14,8 +14,8 @@ struct PlayView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    notchSummary
                     ProfilePicker()
+                    notchDiagrams
 
                     LazyVGrid(columns: columns, spacing: 12) {
                         ForEach(SleepSound.allCases, id: \.self) { sound in
@@ -78,32 +78,13 @@ struct PlayView: View {
         .onChange(of: notchWidthOctaves) { syncNotch() }
     }
 
+    /// The active profile's notches in each ear, grayed out while the notch is off.
     @ViewBuilder
-    private var notchSummary: some View {
-        let pitches = store.ears.pitches
-        if !pitches.isEmpty {
-            Label {
-                VStack(alignment: .leading) {
-                    if pitches.isSameInBothEars {
-                        Text(player.filterEnabled ? "Removing \(Format.earNotch(pitches.leftNotches, minimumWidthOctaves: notchWidthOctaves))" : "Notch off (A/B comparison)")
-                            .font(.headline)
-                        Text("Both ears, centered on your \(Format.pitches(pitches.left)) match\(pitches.left.count == 1 ? "" : "es")")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text(player.filterEnabled ? "A separate notch in each ear" : "Notch off (A/B comparison)")
-                            .font(.headline)
-                        Text("Left: \(Format.earNotch(pitches.leftNotches, minimumWidthOctaves: notchWidthOctaves))\nRight: \(Format.earNotch(pitches.rightNotches, minimumWidthOctaves: notchWidthOctaves))")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            } icon: {
-                Image(systemName: player.filterEnabled ? "waveform.badge.minus" : "waveform")
-            }
-        } else {
-            Label(store.activeProfile.map { "\($0.name) has no matches yet, so sounds play unfiltered. Add matches on the Profile tab." }
-                  ?? "No matches yet, so sounds play unfiltered. Use the Match tab first.", systemImage: "exclamationmark.circle")
+    private var notchDiagrams: some View {
+        EarNotchDiagrams(ears: store.ears, minimumWidthOctaves: notchWidthOctaves, dimmed: !player.filterEnabled)
+        if store.ears.isEmpty {
+            Label("\(store.activeProfile.name) has no matches yet, so sounds play unfiltered. Add matches on the Notch Profile tab.", systemImage: "exclamationmark.circle")
+                .font(.callout)
                 .foregroundStyle(.secondary)
         }
     }

@@ -202,6 +202,20 @@ final class ReviewFixesTests: XCTestCase {
         XCTAssertEqual(NotchDesign.notchWidth(matchedOctaves: 0, minimumOctaves: 1), 1)
         XCTAssertEqual(NotchDesign.notchWidth(matchedOctaves: 0, minimumOctaves: 0.5), 0.5)
         XCTAssertEqual(NotchDesign.notchWidth(matchedOctaves: 1, minimumOctaves: 0.5), 1.5)
-        XCTAssertEqual(NotchDesign.notchWidth(matchedOctaves: 0.125, minimumOctaves: 0.5), 0.625)
+        XCTAssertEqual(NotchDesign.notchWidth(matchedOctaves: 0.75, minimumOctaves: 0.5), 1.25)
+        XCTAssertEqual(NotchDesign.notchWidth(matchedOctaves: 0.125, minimumOctaves: 0.5), 0.5)
+    }
+
+    func testFollowMyMatchUsesTwiceTheMatchedWidth() {
+        let follow = NotchDesign.followMatchMinimumOctaves
+        // Narrow matches get twice their width.
+        XCTAssertEqual(NotchDesign.notchWidth(matchedOctaves: 0.125, minimumOctaves: follow), 0.25)
+        XCTAssertEqual(NotchDesign.notchWidth(matchedOctaves: 0.5, minimumOctaves: follow), 1)
+        // Wide matches stop at the matched width plus 1/2 octave.
+        XCTAssertEqual(NotchDesign.notchWidth(matchedOctaves: 1, minimumOctaves: follow), 1.5)
+        // Pure tones and very narrow hiss get the 1/6 octave floor.
+        XCTAssertEqual(NotchDesign.notchWidth(matchedOctaves: 0, minimumOctaves: follow), follow)
+        XCTAssertEqual(NotchDesign.notchWidth(matchedOctaves: 1.0 / 16, minimumOctaves: follow), follow)
+        XCTAssertEqual(NotchDesign.notchWidth(matchedOctaves: 0, minimumOctaves: 0), follow)
     }
 }

@@ -3,8 +3,7 @@ import TinnitusCore
 
 struct ProfileView: View {
     @Environment(ProfileStore.self) private var store
-    @AppStorage("notchWidthOctaves") private var notchWidthOctaves = 1.0
-    @State private var renaming: TinnitusProfile?
+    @AppStorage("notchWidthOctaves") private var notchWidthOctaves = NotchDesign.followMatchMinimumOctaves
     @State private var renamingProfile: MatchProfile?
     @State private var newName = ""
     @State private var creatingProfile = false
@@ -16,6 +15,23 @@ struct ProfileView: View {
         @Bindable var store = store
         NavigationStack {
             List {
+                profileChoice
+                Section {
+                    EarNotchDiagrams(ears: store.ears, minimumWidthOctaves: notchWidthOctaves)
+                        .padding(.vertical, 4)
+                } footer: {
+                    Text("Shaded areas are removed from Play and Music. Ticks mark each match's pitch.")
+                }
+                activeProfileSections(store.activeProfile)
+
+                Section {
+                    Toggle("Same notch in both ears", isOn: $store.sameForBothEars)
+                } footer: {
+                    Text(store.sameForBothEars
+                         ? "Every match notches both ears, whichever ear it was for."
+                         : "Each match notches its own ear. Matches for both ears notch each side.")
+                }
+
                 if store.profiles.isEmpty {
                     ContentUnavailableView(
                         "No matches yet",
@@ -23,27 +39,12 @@ struct ProfileView: View {
                         description: Text("Use the Match tab to measure your tinnitus.")
                     )
                 } else {
-                    profileChoice
-                    if let profile = store.activeProfile {
-                        activeProfileSections(profile)
-                    } else {
-                        automaticSections
-                    }
-
-                    Section {
-                        Toggle("Same notch in both ears", isOn: $store.sameForBothEars)
-                    } footer: {
-                        Text(store.sameForBothEars
-                             ? "Every match notches both ears, whichever ear it was for."
-                             : "Each match notches its own ear. Matches for both ears notch each side.")
-                    }
-
                     savedMatches
-                    filterSection
-                    backupSection
                 }
+                filterSection
+                backupSection
             }
-            .navigationTitle("Profile")
+            .navigationTitle("Notch Profile")
             .safeAreaInset(edge: .bottom) {
                 if let deletion = store.recentDeletion {
                     undoBanner(deletion)
@@ -57,13 +58,6 @@ struct ProfileView: View {
                     try? await Task.sleep(for: .seconds(8))
                     if !Task.isCancelled { store.clearRecentDeletion() }
                 }
-            }
-            .alert("Rename match", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-                TextField("Name", text: $newName)
-                Button("Save") {
-                    if let match = renaming { store.rename(match.id, to: newName) }
-                }
-                Button("Cancel", role: .cancel) {}
             }
             .alert("Rename profile", isPresented: Binding(get: { renamingProfile != nil }, set: { if !$0 { renamingProfile = nil } })) {
                 TextField("Name", text: $newName)
@@ -88,7 +82,7 @@ struct ProfileView: View {
                     if let profile = deletingProfile { store.deleteProfile(profile.id) }
                 }
             } message: {
-                Text("Its matches stay saved.")
+                Text(store.matchProfiles.count > 1 ? "Its matches stay saved." : "Its matches stay saved, and a new empty profile takes its place.")
             }
             .alert("Can't add match", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
                 Button("OK", role: .cancel) {}
@@ -102,20 +96,24 @@ struct ProfileView: View {
 
     private var profileChoice: some View {
         Section {
-            Picker("Profile in use", selection: Binding(get: { store.activeProfileID }, set: { store.activeProfileID = $0 })) {
-                Text("Automatic").tag(UUID?.none)
+            Picker("Profile in use", selection: Binding(get: { store.activeProfile.id }, set: { store.activeProfileID = $0 })) {
                 ForEach(store.matchProfiles) { profile in
-                    Text(profile.name).tag(UUID?.some(profile.id))
+                    Text(profile.name).tag(profile.id)
                 }
             }
             Button("New Profile", systemImage: "plus") {
                 newName = store.nextProfileName
                 creatingProfile = true
             }
+            Button("Rename Profile", systemImage: "pencil") {
+                newName = store.activeProfile.name
+                renamingProfile = store.activeProfile
+            }
+            Button("Delete Profile", systemImage: "trash", role: .destructive) {
+                deletingProfile = store.activeProfile
+            }
         } footer: {
-            Text(store.activeProfile == nil
-                 ? "Automatic groups each ear's recent matches by pitch and notches the median of each group, so two different pitches each get a notch. A profile combines the matches you choose, up to \(NotchDesign.maxNotchesPerEar) per ear, with a notch for each."
-                 : "Play, Music, and the match screens use this profile.")
+            Text("Play, Music, and the match screens use this profile. It combines the matches you choose, up to \(NotchDesign.maxNotchesPerEar) per ear, with a notch for each.")
         }
     }
 
@@ -125,25 +123,27 @@ struct ProfileView: View {
     private func activeProfileSections(_ profile: MatchProfile) -> some View {
         let ears = store.ears(for: profile)
         if ears.isEmpty {
-            Section(profile.name) {
+            Section {
                 Text("No matches in this profile yet, so it plays unfiltered. Tap + next to a saved match below, or save a new match from the Match tab.")
                     .foregroundStyle(.secondary)
+            } header: {
+                sectionTitle(profile.name)
             }
         } else if store.sameForBothEars || ears.left == ears.right {
-            profileEarSection("\(profile.name): both ears", ears.left, profile: profile)
+            profileEarSection("\(profile.name): Both Ears", ears.left, profile: profile)
         } else {
-            profileEarSection("\(profile.name): left ear", ears.left, profile: profile)
-            profileEarSection("\(profile.name): right ear", ears.right, profile: profile)
+            profileEarSection("\(profile.name): Left Ear", ears.left, profile: profile)
+            profileEarSection("\(profile.name): Right Ear", ears.right, profile: profile)
         }
-        Section {
-            Button("Rename Profile", systemImage: "pencil") {
-                newName = profile.name
-                renamingProfile = profile
-            }
-            Button("Delete Profile", systemImage: "trash", role: .destructive) {
-                deletingProfile = profile
-            }
-        }
+    }
+
+    /// Larger, darker than a normal list header, so each ear section stands out.
+    private func sectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.title3.bold())
+            .foregroundStyle(.primary)
+            .textCase(nil)
+            .padding(.top, 8)
     }
 
     private func profileEarSection(_ title: String, _ matches: [TinnitusProfile], profile: MatchProfile) -> some View {
@@ -152,69 +152,19 @@ struct ProfileView: View {
                 Text("No matches for this ear, so it plays unfiltered.")
                     .foregroundStyle(.secondary)
             }
-            ForEach(matches) { match in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(Format.matchTitle(match)).font(.headline)
-                    Text(Format.matchSummary(match))
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                .swipeActions {
-                    Button("Remove") { store.unload(match.id, from: profile.id) }
-                        .tint(.orange)
-                }
-            }
-            if !matches.isEmpty {
-                LabeledContent("Notch removes", value: Format.earNotch(matches: matches, minimumWidthOctaves: notchWidthOctaves))
+            ForEach(matches.sorted(by: TinnitusProfile.displayOrder)) { match in
+                MatchRow(match: match, minimumWidthOctaves: notchWidthOctaves)
+                    .padding(.vertical, 4)
+                    .swipeActions {
+                        Button("Remove") { store.unload(match.id, from: profile.id) }
+                            .tint(.orange)
+                    }
             }
         } header: {
-            Text(title)
+            sectionTitle(title)
         } footer: {
             if !matches.isEmpty {
                 Text("Swipe left to take a match out of \(profile.name). The match stays saved.")
-            }
-        }
-    }
-
-    // MARK: Automatic
-
-    @ViewBuilder
-    private var automaticSections: some View {
-        let ears = store.automaticEars
-        if store.sameForBothEars || ears.left == ears.right {
-            earSection("Both ears", ears.left)
-        } else {
-            earSection("Left ear", ears.left)
-            earSection("Right ear", ears.right)
-        }
-    }
-
-    /// One ear's automatic notches: one per group of matches with a similar pitch.
-    @ViewBuilder
-    private func earSection(_ title: String, _ groups: [TinnitusProfile]) -> some View {
-        Section {
-            if groups.isEmpty {
-                Text("No sessions for this ear yet, so it plays unfiltered. Match it in the Match tab.")
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(groups) { profile in
-                VStack(alignment: .leading, spacing: 4) {
-                    LabeledContent("Pitch", value: Format.frequency(profile.centerFrequencyHz))
-                    LabeledContent("Width", value: Format.bandwidth(profile.bandwidthOctaves))
-                    LabeledContent("Loudness", value: "\(Format.level(profile.sensationLevelDB)) above threshold")
-                    if profile.notes.hasPrefix("Median") {
-                        Text(profile.notes).font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-            }
-            if !groups.isEmpty {
-                LabeledContent("Notch removes", value: Format.earNotch(matches: groups, minimumWidthOctaves: notchWidthOctaves))
-            }
-        } header: {
-            Text(title)
-        } footer: {
-            if groups.count > 1 {
-                Text("Your recent matches here have \(groups.count) different pitches, so each gets its own notch.")
             }
         }
     }
@@ -224,13 +174,14 @@ struct ProfileView: View {
     private var filterSection: some View {
         Section {
             Picker("Smallest notch", selection: $notchWidthOctaves) {
-                Text("1 octave").tag(1.0)
+                Text("Follow my match").tag(NotchDesign.followMatchMinimumOctaves)
                 Text("1/2 octave").tag(0.5)
+                Text("1 octave").tag(1.0)
             }
         } header: {
             Text("Filter")
         } footer: {
-            Text("Each notch is your matched width plus 1/2 octave, so the edges of a hiss are cut deeply, and never narrower than this. 1 octave is the width used in most published studies. 1/2 octave keeps more of the sound around a pure tone.")
+            Text("Each notch is twice your matched width, so the edges of a hiss are cut deeply, but never more than 1/2 octave wider than the match. Follow my match keeps notches that tight, with at least 1/6 octave for a pure tone. 1 octave is the width used in most published studies, and 1/2 octave is in between.")
         }
     }
 
@@ -264,42 +215,23 @@ struct ProfileView: View {
     // MARK: Saved matches
 
     private var savedMatches: some View {
-        Section {
-            ForEach(store.profiles) { match in
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading) {
-                        Text(Format.matchTitle(match)).font(.headline)
-                        if match.name != nil {
-                            Text(match.date, format: .dateTime.month().day().hour().minute())
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Text("\(match.ear.shortTitle): \(Format.frequency(match.centerFrequencyHz)), \(Format.bandwidth(match.bandwidthOctaves)), \(Format.level(match.sensationLevelDB)) above threshold")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                        if !match.notes.isEmpty {
-                            Text(match.notes).font(.caption)
-                        }
-                    }
-                    Spacer()
-                    if let profile = store.activeProfile {
-                        loadButton(match, profile: profile)
-                    }
+        let profile = store.activeProfile
+        let sorted = store.sortedMatches
+        return Section {
+            ForEach(sorted) { match in
+                HStack(spacing: 6) {
+                    MatchRow(match: match, minimumWidthOctaves: notchWidthOctaves)
+                    loadButton(match, profile: profile)
                 }
-                .swipeActions(edge: .leading) {
-                    Button("Rename") {
-                        newName = match.name ?? ""
-                        renaming = match
-                    }
-                    .tint(.blue)
-                }
+                .padding(.vertical, 4)
             }
-            .onDelete(perform: store.delete)
+            .onDelete { offsets in
+                store.delete(ids: offsets.map { sorted[$0].id })
+            }
         } header: {
             Text("Saved matches")
         } footer: {
-            Text(store.activeProfile.map { "Tap + to load a match into \($0.name), or the check mark to take it out. Swipe right to rename, left to delete. You can undo a delete." }
-                 ?? "Swipe right to rename, left to delete. You can undo a delete. Pick or make a profile above to combine matches.")
+            Text("Tap + to load a match into \(profile.name), or the check mark to take it out. Swipe left to delete. You can undo a delete.")
         }
     }
 

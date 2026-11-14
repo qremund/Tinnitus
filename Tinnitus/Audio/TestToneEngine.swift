@@ -22,7 +22,7 @@ final class TestToneEngine {
     @ObservationIgnored private var sourceNode: AVAudioSourceNode?
     @ObservationIgnored private var renderState: RenderState?
     @ObservationIgnored private var parameters = TestSoundParameters()
-    /// Other sounds played quietly alongside the main one, such as a profile's other matches.
+    /// Other sounds played alongside the main one: the profile's other matches that are on.
     @ObservationIgnored private var companions: [TestSoundParameters] = []
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var volumeObservation: NSKeyValueObservation?
@@ -180,7 +180,8 @@ final class TestToneEngine {
 /// New settings arrive through a mailbox the audio thread never waits on, and old settings are
 /// released back on the main thread.
 private final class RenderState: @unchecked Sendable {
-    static let maxCompanions = 4
+    /// Up to 4 matches per ear in a profile, so 8 in all, plus a new match being tuned.
+    static let maxCompanions = 8
     /// Companions render into these, then get added to the output.
     private static let scratchFrames = 4096
 

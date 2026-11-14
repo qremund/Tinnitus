@@ -7,7 +7,7 @@ struct MusicView: View {
     @Environment(MusicLibrary.self) private var library
     @Environment(MusicPlayer.self) private var player
     @Environment(ProfileStore.self) private var store
-    @AppStorage("notchWidthOctaves") private var notchWidthOctaves = 1.0
+    @AppStorage("notchWidthOctaves") private var notchWidthOctaves = NotchDesign.followMatchMinimumOctaves
     @State private var showingFiles = false
     @State private var showingMediaPicker = false
     @State private var importMessage: String?
@@ -15,10 +15,10 @@ struct MusicView: View {
     var body: some View {
         NavigationStack {
             List {
-                if !store.profiles.isEmpty {
-                    Section("Notch") {
-                        ProfilePicker()
-                    }
+                Section("Notch") {
+                    ProfilePicker()
+                    EarNotchDiagrams(ears: store.ears, minimumWidthOctaves: notchWidthOctaves, dimmed: !player.filterEnabled)
+                        .padding(.vertical, 4)
                 }
                 if library.tracks.isEmpty {
                     emptyState
@@ -108,21 +108,10 @@ struct MusicView: View {
     }
 
     private var notchFooter: String {
-        let pitches = store.ears.pitches
-        if pitches.isEmpty {
-            return store.activeProfile.map { "\($0.name) has no matches yet, so songs play unfiltered." }
-                ?? "No matches yet, so songs play unfiltered. Use the Match tab first."
+        if store.ears.isEmpty {
+            return "\(store.activeProfile.name) has no matches yet, so songs play unfiltered."
         }
-        let removed: String
-        if pitches.isSameInBothEars {
-            removed = "Songs play with \(Format.earNotch(pitches.leftNotches, minimumWidthOctaves: notchWidthOctaves)) removed in both ears."
-        } else {
-            func ear(_ name: String, _ notches: [NotchSpec]) -> String {
-                notches.isEmpty ? "\(name) ear: unfiltered." : "\(name) ear: \(Format.earNotch(notches, minimumWidthOctaves: notchWidthOctaves)) removed."
-            }
-            removed = "\(ear("Left", pitches.leftNotches)) \(ear("Right", pitches.rightNotches)) Mono songs get both ears' notches."
-        }
-        return removed
+        return store.ears.pitches.isSameInBothEars ? "" : "Mono songs get both ears' notches."
     }
 
     private func openMusicLibrary() {

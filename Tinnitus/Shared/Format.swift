@@ -12,6 +12,14 @@ enum Format {
         return "1/\(Int((1 / octaves).rounded())) octave"
     }
 
+    /// Width for tight spaces, like "Tone", "1/8 oct", "3/4 oct".
+    static func shortBandwidth(_ octaves: Double) -> String {
+        if octaves <= 0 { return "Tone" }
+        if octaves >= 0.99 { return "1 oct" }
+        if octaves > 0.6 { return "3/4 oct" }
+        return "1/\(Int((1 / octaves).rounded())) oct"
+    }
+
     static func level(_ db: Double) -> String {
         "\(Int(db.rounded())) dB"
     }
@@ -23,7 +31,7 @@ enum Format {
     }
 
     /// One ear's notches for summaries, like "2.12 kHz to 4.24 kHz and 5.66 kHz to 6.73 kHz",
-    /// with overlapping notches merged. Each notch is its match's width plus a margin, and at least
+    /// with overlapping notches merged. Each notch is twice its match's width (at most the width plus 1/2 octave), and at least
     /// `minimumWidthOctaves`. "unfiltered" when that ear has no match.
     static func earNotch(_ notches: [NotchSpec], minimumWidthOctaves: Double) -> String {
         let bands = NotchDesign.bands(notches: notches, minimumWidthOctaves: minimumWidthOctaves)

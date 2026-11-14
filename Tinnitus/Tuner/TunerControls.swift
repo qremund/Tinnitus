@@ -6,10 +6,10 @@ struct TunerCard<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 6) {
             content
         }
-        .padding(14)
+        .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
     }
@@ -30,7 +30,7 @@ struct PitchNudgeRow: View {
     let model: TunerModel
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             nudge("Octave ↓", label: "Octave down") { model.octave(up: false) }
             nudge("−", label: "Lower pitch slightly") { model.nudgePitch(semitones: -0.25) }
             nudge("+", label: "Raise pitch slightly") { model.nudgePitch(semitones: 0.25) }
@@ -41,12 +41,13 @@ struct PitchNudgeRow: View {
     private func nudge(_ title: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.callout.weight(.medium))
+                .font(.footnote.weight(.medium))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-                .frame(maxWidth: .infinity, minHeight: 44)
+                .frame(maxWidth: .infinity, minHeight: 30)
         }
         .buttonStyle(.bordered)
+        .buttonBorderShape(.roundedRectangle(radius: 8))
         .accessibilityLabel(label)
     }
 }
@@ -56,7 +57,7 @@ struct WidthNudgeRow: View {
     let model: TunerModel
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             nudge("Width ÷2", label: "Halve width") { model.scaleWidth(by: 0.5) }
             nudge("−", label: "Narrower slightly") { model.nudgeWidth(by: -0.04) }
             nudge("+", label: "Wider slightly") { model.nudgeWidth(by: 0.04) }
@@ -67,12 +68,13 @@ struct WidthNudgeRow: View {
     private func nudge(_ title: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.callout.weight(.medium))
+                .font(.footnote.weight(.medium))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-                .frame(maxWidth: .infinity, minHeight: 44)
+                .frame(maxWidth: .infinity, minHeight: 30)
         }
         .buttonStyle(.bordered)
+        .buttonBorderShape(.roundedRectangle(radius: 8))
         .accessibilityLabel(label)
     }
 }

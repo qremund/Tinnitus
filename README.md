@@ -17,13 +17,17 @@ This is a personal tool, not a medical device.
 
 With a free Apple ID the app stops opening after 7 days. Run it from Xcode again to reinstall.
 
+## Matching
+
+The Match tab has four layouts of the same tuner (sliders, a pitch and width pad, a draggable band, and dials). Under the controls, Left and Right diagrams show the active profile's notches. Tap a notch to load that match into the controls; tap again where notches overlap to step to the next one. Play turns the selected match on or off, and each match keeps its own on or off state, so several can play together at their saved settings while the selected one follows the controls. New starts a new match. Saving an edited match runs the faintest-level check again with only that match playing, and changes it in the active profile only: other profiles that use it keep the earlier version.
+
 ## Music
 
 The Music tab plays songs you add from the Files app or from your Music library (songs you bought or synced). Songs are filtered live as they play, through an audio processing tap, so they start at once and profile changes take effect immediately. Mono songs get both ears' notches. Apple Music streams and downloads are copy protected, so no app can filter them.
 
 ## Notches
 
-Each notch is as wide as the matched sound plus 1/2 octave, and never narrower than the width chosen on the Profile tab (1 or 1/2 octave). Automatic mode groups each ear's six newest matches by pitch (within 1/2 octave) and notches the median of each group's newest three, so two different pitches each get their own notch.
+Each notch is twice the matched width, capped at the matched width plus 1/2 octave, and never narrower than the smallest notch chosen on the Notch Profile tab: Follow my match (the default, at least 1/6 octave), 1/2 octave, or 1 octave. There is always one active profile, a named set of up to four matches per ear, with a notch for each. (The old Automatic mode, which used the median of recent matches, is gone; anyone still on it gets a profile of their newest matches.)
 
 ## Tests
 

@@ -37,7 +37,7 @@ struct ContentView: View {
             MatchHomeView()
                 .tabItem { Label("Match", systemImage: "waveform.badge.magnifyingglass") }
             ProfileView()
-                .tabItem { Label("Profile", systemImage: "person.crop.circle") }
+                .tabItem { Label("Notch Profile", image: "NotchTab") }
         }
         .alert("Saved data problem", isPresented: Binding(get: { store.loadProblem != nil }, set: { if !$0 { store.loadProblem = nil } })) {
             Button("OK", role: .cancel) {}

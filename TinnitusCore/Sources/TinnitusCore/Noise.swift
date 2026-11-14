@@ -52,3 +52,16 @@ public enum SafetyLimits {
     /// Quietest level offered by the hearing threshold step.
     public static let minTestLevelDBFS = -100.0
 }
+
+extension SafetyLimits {
+    /// Levels for sounds that play together. Each is capped at `maxTestLevelDBFS`, and if their
+    /// combined power would still be louder than that, all of them come down by the same amount,
+    /// so several matches playing at once are never louder than one sound at the cap.
+    public static func combinedTestLevels(_ levels: [Double]) -> [Double] {
+        let capped = levels.map { min($0, maxTestLevelDBFS) }
+        guard capped.count > 1 else { return capped }
+        let total = 10 * log10(capped.reduce(0) { $0 + pow(10, $1 / 10) })
+        let excess = total - maxTestLevelDBFS
+        return excess > 0 ? capped.map { $0 - excess } : capped
+    }
+}
