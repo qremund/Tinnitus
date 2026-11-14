@@ -26,6 +26,15 @@ struct MatchHomeView: View {
                     Text("Use earbuds or headphones in a quiet room, with your phone volume at the same setting each time. Saving a few matches on different days gives a steadier result.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Safety", systemImage: "ear")
+                            .font(.subheadline.bold())
+                        Text("Test sounds are capped well below full volume, and the match screens warn if your phone volume is above 75%. Keep the Control Center hearing meter under 80 dB.")
+                        Text("This is a personal tool, not a medical device. Sudden changes in your tinnitus, or tinnitus in one ear only, are worth a visit to an audiologist.")
+                    }
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
                 }
                 .padding()
             }

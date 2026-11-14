@@ -5,6 +5,9 @@ import os
 import TinnitusCore
 
 /// Plays the procedural sleep sounds through the tinnitus notch, in the background and on the lock screen.
+/// When playback stops, the audio engine shuts down and the audio session is released, so the app
+/// doesn't keep running in the background after the sleep timer ends.
+@MainActor
 @Observable
 final class SleepPlayer {
     private(set) var isPlaying = false
@@ -40,7 +43,11 @@ final class SleepPlayer {
     @ObservationIgnored private var notchWidthOctaves = 1.0
     @ObservationIgnored private var fadeGain = 1.0
     @ObservationIgnored private var timer: Timer?
+    @ObservationIgnored private var shutdown: DispatchWorkItem?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
+
+    /// How long after a pause the engine shuts down: long enough for the volume to glide to silence.
+    static let shutdownDelay: TimeInterval = 0.6
 
     init() {
         let defaults = UserDefaults.standard
@@ -50,24 +57,24 @@ final class SleepPlayer {
         }
         let center = NotificationCenter.default
         observers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] note in
-            if let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
-               AVAudioSession.RouteChangeReason(rawValue: raw) == .oldDeviceUnavailable {
+            let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt).flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
+            MainActor.assumeIsolated {
                 // Headphones unplugged: pause instead of switching to the speaker.
-                self?.pause()
+                if reason == .oldDeviceUnavailable { self?.pause() }
             }
         })
         observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
-            self?.handleInterruption(note)
+            let type = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt).flatMap(AVAudioSession.InterruptionType.init(rawValue:))
+            let options = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt).map(AVAudioSession.InterruptionOptions.init(rawValue:)) ?? []
+            MainActor.assumeIsolated {
+                self?.handleInterruption(type: type, options: options)
+            }
         })
         observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
-            self?.rebuild()
+            MainActor.assumeIsolated {
+                self?.rebuild()
+            }
         })
-    }
-
-    deinit {
-        for observer in observers {
-            NotificationCenter.default.removeObserver(observer)
-        }
     }
 
     var hasNotch: Bool { !notchPitches.isEmpty }
@@ -82,6 +89,8 @@ final class SleepPlayer {
 
     func play() {
         onWillPlay?()
+        shutdown?.cancel()
+        shutdown = nil
         prepare()
         guard renderState != nil else { return }
         isPlaying = true
@@ -96,6 +105,32 @@ final class SleepPlayer {
         cancelTimer()
         submit()
         updateNowPlaying()
+        scheduleShutdown()
+    }
+
+    /// Stops the engine and releases the audio session once the volume has faded out.
+    private func scheduleShutdown() {
+        shutdown?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, !self.isPlaying else { return }
+                self.tearDown()
+            }
+        }
+        shutdown = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.shutdownDelay, execute: work)
+    }
+
+    private func tearDown() {
+        shutdown?.cancel()
+        shutdown = nil
+        engine.stop()
+        if let node = sourceNode {
+            engine.detach(node)
+        }
+        sourceNode = nil
+        renderState = nil
+        AudioSessionCoordinator.deactivate(.sleep)
     }
 
     func togglePlayback() {
@@ -109,7 +144,9 @@ final class SleepPlayer {
         let end = Date().addingTimeInterval(TimeInterval(minutes * 60))
         timerEnd = end
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            self?.tickTimer()
+            MainActor.assumeIsolated {
+                self?.tickTimer()
+            }
         }
     }
 
@@ -139,41 +176,40 @@ final class SleepPlayer {
     private func prepare() {
         guard renderState == nil else { return }
         do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default)
-            try session.setActive(true)
+            try AudioSessionCoordinator.activate(.sleep)
 
             let outputRate = engine.outputNode.outputFormat(forBus: 0).sampleRate
             let sampleRate = outputRate > 0 ? outputRate : 48_000
             guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2) else { return }
             let state = MixerRenderState(mixer: SleepMixer(sampleRate: sampleRate, configuration: configuration(sampleRate: sampleRate)))
-            let node = AVAudioSourceNode(format: format) { _, _, frameCount, bufferList in
-                let buffers = UnsafeMutableAudioBufferListPointer(bufferList)
-                guard let left = buffers[0].mData?.assumingMemoryBound(to: Float.self) else { return noErr }
-                let right = buffers.count > 1 ? buffers[1].mData?.assumingMemoryBound(to: Float.self) : nil
-                state.render(left: left, right: right, frameCount: Int(frameCount))
-                return noErr
-            }
+            let node = Self.makeSourceNode(format: format, state: state)
             engine.attach(node)
             engine.connect(node, to: engine.mainMixerNode, format: format)
+            sourceNode = node
             engine.prepare()
             try engine.start()
-            sourceNode = node
             renderState = state
             errorMessage = nil
         } catch {
             errorMessage = "Audio could not start: \(error.localizedDescription)"
+            tearDown()
+        }
+    }
+
+    /// Built outside the main actor, so the render block carries no main-actor isolation onto the audio thread.
+    private nonisolated static func makeSourceNode(format: AVAudioFormat, state: MixerRenderState) -> AVAudioSourceNode {
+        AVAudioSourceNode(format: format) { _, _, frameCount, bufferList in
+            let buffers = UnsafeMutableAudioBufferListPointer(bufferList)
+            guard let left = buffers[0].mData?.assumingMemoryBound(to: Float.self) else { return noErr }
+            let right = buffers.count > 1 ? buffers[1].mData?.assumingMemoryBound(to: Float.self) : nil
+            state.render(left: left, right: right, frameCount: Int(frameCount))
+            return noErr
         }
     }
 
     private func rebuild() {
         let wasPlaying = isPlaying
-        engine.stop()
-        if let node = sourceNode {
-            engine.detach(node)
-        }
-        sourceNode = nil
-        renderState = nil
+        tearDown()
         if wasPlaying {
             play()
         }
@@ -196,22 +232,24 @@ final class SleepPlayer {
         state.submit(configuration(sampleRate: state.mixer.sampleRate))
     }
 
-    private func handleInterruption(_ note: Notification) {
-        guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
-              let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+    /// True while a phone call or similar has paused playback that should resume afterward.
+    @ObservationIgnored private var interruptedWhilePlaying = false
+
+    private func handleInterruption(type: AVAudioSession.InterruptionType?, options: AVAudioSession.InterruptionOptions) {
         switch type {
         case .began:
+            interruptedWhilePlaying = isPlaying
+            guard isPlaying else { return }
             isPlaying = false
-            submit()
             updateNowPlaying()
+            // The system has already stopped the sound, so shut down now; play() rebuilds.
+            tearDown()
         case .ended:
-            let options = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt).map { AVAudioSession.InterruptionOptions(rawValue: $0) } ?? []
-            if options.contains(.shouldResume) {
-                try? AVAudioSession.sharedInstance().setActive(true)
-                try? engine.start()
+            if interruptedWhilePlaying && options.contains(.shouldResume) {
                 play()
             }
-        @unknown default:
+            interruptedWhilePlaying = false
+        default:
             break
         }
     }
@@ -235,26 +273,28 @@ final class SleepPlayer {
     }
 }
 
-/// Owns the mixer on the audio thread. New settings arrive through a lock the audio thread never waits on.
-private final class MixerRenderState {
+/// Owns the mixer on the audio thread. New settings arrive through a mailbox the audio thread never
+/// waits on, and old settings are released back on the main thread.
+private final class MixerRenderState: @unchecked Sendable {
     let mixer: SleepMixer
-    private let pending = OSAllocatedUnfairLock<SleepMixer.Configuration?>(initialState: nil)
+    private let mailbox = RealtimeMailbox<SleepMixer.Configuration>()
+    /// Audio thread only: the settings being swapped in or out.
+    private var scratch: SleepMixer.Configuration
 
     init(mixer: SleepMixer) {
         self.mixer = mixer
+        scratch = mixer.configuration
     }
 
     func submit(_ configuration: SleepMixer.Configuration) {
-        pending.withLock { $0 = configuration }
+        mailbox.post(configuration)
     }
 
     func render(left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>?, frameCount: Int) {
-        let next = pending.withLockIfAvailable { state -> SleepMixer.Configuration? in
-            defer { state = nil }
-            return state
-        }
-        if let next, let configuration = next {
-            mixer.apply(configuration)
+        if mailbox.exchange(&scratch) {
+            // `scratch` now holds the new settings; apply swaps the mixer's old ones back into it,
+            // and the next exchange hands those to the main thread to release.
+            mixer.apply(&scratch)
         }
         mixer.render(left: left, right: right, frameCount: frameCount)
     }

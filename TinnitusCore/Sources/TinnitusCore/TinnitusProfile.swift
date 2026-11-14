@@ -31,6 +31,9 @@ public struct TinnitusProfile: Codable, Identifiable, Equatable, Sendable {
     public var notes: String
     /// Optional name the user gave this match. Older saved matches have none.
     public var name: String?
+    /// The phone's volume (0 to 1) when the match was made, so later matches can use the same setting.
+    /// Older saved matches have none.
+    public var phoneVolume: Double?
 
     public init(
         id: UUID = UUID(),
@@ -43,7 +46,8 @@ public struct TinnitusProfile: Codable, Identifiable, Equatable, Sendable {
         matchLevelDBFS: Double,
         coarseRatings: [FrequencyRating] = [],
         notes: String = "",
-        name: String? = nil
+        name: String? = nil,
+        phoneVolume: Double? = nil
     ) {
         self.id = id
         self.date = date
@@ -56,6 +60,7 @@ public struct TinnitusProfile: Codable, Identifiable, Equatable, Sendable {
         self.coarseRatings = coarseRatings
         self.notes = notes
         self.name = name
+        self.phoneVolume = phoneVolume
     }
 
     /// Loudness above your own hearing threshold at that pitch.
@@ -72,6 +77,7 @@ public struct TinnitusProfile: Codable, Identifiable, Equatable, Sendable {
         result.matchLevelDBFS = median(profiles.map(\.matchLevelDBFS))
         result.notes = "Median of \(profiles.count) sessions"
         result.name = nil
+        result.phoneVolume = nil
         return result
     }
 
@@ -115,7 +121,10 @@ public struct EarProfiles: Equatable, Sendable {
 
     /// Notch centers for each ear.
     public var pitches: EarPitches {
-        EarPitches(left: left.map(\.centerFrequencyHz), right: right.map(\.centerFrequencyHz))
+        func notches(_ matches: [TinnitusProfile]) -> [NotchSpec] {
+            matches.map { NotchSpec(centerHz: $0.centerFrequencyHz, matchedWidthOctaves: $0.bandwidthOctaves) }
+        }
+        return EarPitches(leftNotches: notches(left), rightNotches: notches(right))
     }
 
     public var isEmpty: Bool { left.isEmpty && right.isEmpty }
@@ -129,19 +138,46 @@ public struct EarProfiles: Equatable, Sendable {
         }
     }
 
-    /// Automatic mode: each ear gets the median of the newest `sessions` matches that apply to it.
+    /// How many of the newest matches Automatic mode looks at for each ear.
+    public static let automaticRecentMatches = 6
+    /// Matches closer than this in pitch are treated as the same sound.
+    public static let samePitchOctaves = 0.5
+
+    /// Automatic mode: each ear looks at its newest `automaticRecentMatches` matches, groups them by
+    /// pitch, and gets one median per group from that group's newest `sessions` matches. So two
+    /// different tinnitus pitches in one ear each get their own notch instead of one notch between them.
     /// Left and right matches count for their own ear and "both" matches count for both. With
-    /// `sameForBothEars`, every match counts for both ears and the two sides get the same median.
+    /// `sameForBothEars`, every match counts for both ears and the two sides get the same notches.
     public static func from(_ profiles: [TinnitusProfile], sameForBothEars: Bool, sessions: Int = 3) -> EarProfiles {
         let newestFirst = profiles.sorted { $0.date > $1.date }
         if sameForBothEars {
-            let shared = TinnitusProfile.consensus(of: Array(newestFirst.prefix(sessions)))
+            let shared = medians(of: Array(newestFirst.prefix(automaticRecentMatches)), sessions: sessions)
             return EarProfiles(left: shared, right: shared)
         }
-        func side(_ ear: Ear) -> TinnitusProfile? {
-            TinnitusProfile.consensus(of: Array(newestFirst.filter { $0.ear == ear || $0.ear == .both }.prefix(sessions)))
+        func side(_ ear: Ear) -> [TinnitusProfile] {
+            medians(of: Array(newestFirst.filter { $0.ear == ear || $0.ear == .both }.prefix(automaticRecentMatches)), sessions: sessions)
         }
         return EarProfiles(left: side(.left), right: side(.right))
+    }
+
+    /// Groups matches by pitch, then takes the median of each group's newest `sessions` matches.
+    static func medians(of matches: [TinnitusProfile], sessions: Int) -> [TinnitusProfile] {
+        pitchGroups(matches).compactMap { group in
+            TinnitusProfile.consensus(of: Array(group.sorted { $0.date > $1.date }.prefix(sessions)))
+        }
+    }
+
+    /// Splits matches into groups where neighbors in pitch are less than `samePitchOctaves` apart.
+    static func pitchGroups(_ matches: [TinnitusProfile]) -> [[TinnitusProfile]] {
+        var groups: [[TinnitusProfile]] = []
+        for match in matches.filter({ $0.centerFrequencyHz > 0 }).sorted(by: { $0.centerFrequencyHz < $1.centerFrequencyHz }) {
+            if let last = groups.last?.last, log2(match.centerFrequencyHz / last.centerFrequencyHz) < samePitchOctaves {
+                groups[groups.count - 1].append(match)
+            } else {
+                groups.append([match])
+            }
+        }
+        return groups
     }
 
     /// A profile's matches, each in its own ear: left and right matches in that ear, "both" matches in
@@ -154,31 +190,51 @@ public struct EarProfiles: Equatable, Sendable {
     }
 }
 
-/// Notch centers for each ear in Hz, lowest first. An empty side is unfiltered.
+/// The notches for each ear, lowest pitch first. An empty side is unfiltered.
 public struct EarPitches: Equatable, Hashable, Sendable {
-    public var left: [Double]
-    public var right: [Double]
+    public var leftNotches: [NotchSpec]
+    public var rightNotches: [NotchSpec]
 
-    public init(left: [Double], right: [Double]) {
-        self.left = left.sorted()
-        self.right = right.sorted()
+    public init(leftNotches: [NotchSpec], rightNotches: [NotchSpec]) {
+        self.leftNotches = leftNotches.sorted { $0.centerHz < $1.centerHz }
+        self.rightNotches = rightNotches.sorted { $0.centerHz < $1.centerHz }
     }
 
-    /// One notch (or none) per ear.
+    /// Pure-tone notches at these pitches.
+    public init(left: [Double], right: [Double]) {
+        self.init(leftNotches: left.map { NotchSpec(centerHz: $0) }, rightNotches: right.map { NotchSpec(centerHz: $0) })
+    }
+
+    /// One pure-tone notch (or none) per ear.
     public init(left: Double?, right: Double?) {
         self.init(left: left.map { [$0] } ?? [], right: right.map { [$0] } ?? [])
     }
 
-    public static let none = EarPitches(left: [], right: [])
+    public static let none = EarPitches(leftNotches: [], rightNotches: [])
 
-    public var isEmpty: Bool { left.isEmpty && right.isEmpty }
-    public var isSameInBothEars: Bool { left == right }
+    /// Notch centers in Hz, lowest first.
+    public var left: [Double] { leftNotches.map(\.centerHz) }
+    public var right: [Double] { rightNotches.map(\.centerHz) }
+
+    public var isEmpty: Bool { leftNotches.isEmpty && rightNotches.isEmpty }
+    public var isSameInBothEars: Bool { leftNotches == rightNotches }
 
     public func centers(for ear: Ear) -> [Double] { ear == .right ? right : left }
+    public func notches(for ear: Ear) -> [NotchSpec] { ear == .right ? rightNotches : leftNotches }
 
-    /// Band-stop coefficients for one side, empty when that side is unfiltered. Several pitches give
-    /// several notches in series, with overlapping ones merged into one wider notch.
+    /// Every notch from both ears, for a mono source that can't separate them.
+    public var allNotches: [NotchSpec] {
+        (leftNotches + rightNotches.filter { !leftNotches.contains($0) }).sorted { $0.centerHz < $1.centerHz }
+    }
+
+    /// Band-stop coefficients for one side, empty when that side is unfiltered. Each notch is as wide as
+    /// its matched sound plus a margin, and at least `widthOctaves`. Overlapping notches merge.
     public func notch(for ear: Ear, widthOctaves: Double, sampleRate: Double) -> [BiquadCoefficients] {
-        NotchDesign.forTinnitus(centersHz: centers(for: ear), widthOctaves: widthOctaves, sampleRate: sampleRate)
+        NotchDesign.forTinnitus(notches: notches(for: ear), minimumWidthOctaves: widthOctaves, sampleRate: sampleRate)
+    }
+
+    /// Band-stop coefficients for both ears' notches together.
+    public func combinedNotch(widthOctaves: Double, sampleRate: Double) -> [BiquadCoefficients] {
+        NotchDesign.forTinnitus(notches: allNotches, minimumWidthOctaves: widthOctaves, sampleRate: sampleRate)
     }
 }

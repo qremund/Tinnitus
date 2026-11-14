@@ -3,6 +3,7 @@ import Observation
 import TinnitusCore
 
 /// State for the one-screen tuner. Every change plays the updated test sound right away.
+@MainActor
 @Observable
 final class TunerModel {
     enum Phase {
@@ -120,7 +121,12 @@ final class TunerModel {
     /// Name for the match being saved.
     var matchName = ""
 
-    func makeProfile() -> TinnitusProfile {
+    /// The phone volume of the newest saved match, so the screen can warn when today's differs.
+    var lastPhoneVolume: Double? {
+        (saved.left + saved.right).filter { $0.phoneVolume != nil }.max { $0.date < $1.date }?.phoneVolume
+    }
+
+    func makeProfile(phoneVolume: Double? = nil) -> TinnitusProfile {
         TinnitusProfile(
             ear: ear,
             soundType: soundType,
@@ -129,7 +135,8 @@ final class TunerModel {
             thresholdDBFS: thresholdDBFS,
             matchLevelDBFS: levelDBFS,
             notes: "Quick tune",
-            name: matchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : matchName.trimmingCharacters(in: .whitespacesAndNewlines)
+            name: matchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : matchName.trimmingCharacters(in: .whitespacesAndNewlines),
+            phoneVolume: phoneVolume
         )
     }
 

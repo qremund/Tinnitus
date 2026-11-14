@@ -26,6 +26,8 @@ struct TinnitusApp: App {
 }
 
 struct ContentView: View {
+    @Environment(ProfileStore.self) private var store
+
     var body: some View {
         TabView {
             PlayView()
@@ -36,8 +38,11 @@ struct ContentView: View {
                 .tabItem { Label("Match", systemImage: "waveform.badge.magnifyingglass") }
             ProfileView()
                 .tabItem { Label("Profile", systemImage: "person.crop.circle") }
-            SettingsView()
-                .tabItem { Label("Settings", systemImage: "gearshape") }
+        }
+        .alert("Saved data problem", isPresented: Binding(get: { store.loadProblem != nil }, set: { if !$0 { store.loadProblem = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(store.loadProblem ?? "")
         }
     }
 }

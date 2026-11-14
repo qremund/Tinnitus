@@ -41,6 +41,7 @@ struct TunerView: View {
     @Environment(ProfileStore.self) private var store
     @Environment(SleepPlayer.self) private var player
     @Environment(MusicPlayer.self) private var music
+    @Environment(\.scenePhase) private var scenePhase
     let layout: TunerLayout
     @State private var model: TunerModel?
     @State private var savedMessage: String?
@@ -94,6 +95,7 @@ struct TunerView: View {
             // Sleep sounds and music would drown out the test sound.
             player.pause()
             music.pause()
+            audio.refreshVolume()
             if model == nil {
                 let created = TunerModel(audio: audio, saved: allMatches)
                 created.setCompanions(profileMatches, sameForBothEars: store.sameForBothEars)
@@ -104,6 +106,13 @@ struct TunerView: View {
         }
         .onDisappear {
             model?.stopSound()
+        }
+        .onChange(of: scenePhase) {
+            // Never leave a test sound playing in the background or on the lock screen.
+            // Tap play to hear it again on return.
+            if scenePhase != .active, let model, model.isSoundOn {
+                model.isSoundOn = false
+            }
         }
     }
 
@@ -141,6 +150,12 @@ struct TunerView: View {
                     .font(.callout)
                     .foregroundStyle(.orange)
             }
+            if let warning = volumeWarning(model) {
+                Label(warning, systemImage: "speaker.wave.3.fill")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             EarPicker(model: model)
             switch layout {
             case .sliders:
@@ -162,7 +177,7 @@ struct TunerView: View {
             set: { if !$0, model.phase == .threshold { model.cancelThreshold() } }
         )) {
             ThresholdSheet(model: model, profileName: store.activeProfile?.name) {
-                let match = model.makeProfile()
+                let match = model.makeProfile(phoneVolume: audio.outputVolume)
                 store.add(match)
                 var added: String?
                 var problem: String?
@@ -179,6 +194,21 @@ struct TunerView: View {
             }
             .presentationDetents([.large])
         }
+    }
+}
+
+extension TunerView {
+    /// Warns when the phone is loud enough that capped test sounds could still be uncomfortable, or when
+    /// its volume differs from the last match, which would make loudness matches hard to compare.
+    func volumeWarning(_ model: TunerModel) -> String? {
+        let volume = audio.outputVolume
+        if volume > TestToneEngine.comfortableVolume + 0.01 {
+            return "Your phone volume is at \(Format.volume(volume)). Turn it down to \(Format.volume(TestToneEngine.comfortableVolume)) or less to protect your hearing."
+        }
+        if let last = model.lastPhoneVolume, abs(last - volume) > 0.07 {
+            return "Your last match was at \(Format.volume(last)) phone volume and it's \(Format.volume(volume)) now. Use the same volume so loudness matches compare."
+        }
+        return nil
     }
 }
 

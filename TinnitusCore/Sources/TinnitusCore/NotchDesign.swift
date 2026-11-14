@@ -14,13 +14,33 @@ public enum NotchDesign {
     /// The most separate notches in one ear. Each is 4 biquads, so this bounds the work per sample.
     public static let maxNotchesPerEar = 4
 
-    /// The bands removed for notches at `centersHz`, lowest first. Notches that overlap merge into one
-    /// wider band. If more than `maxBands` remain, the two closest neighbors are joined until they fit,
-    /// so every pitch stays notched.
+    /// How much wider than the matched sound each notch is, so the edges of a hiss are cut deeply
+    /// and not just by the 3 dB at the filter's edges.
+    public static let widthMarginOctaves = 0.5
+
+    /// Notch width for a match: the matched width plus the margin, and never narrower than `minimumOctaves`
+    /// (the width chosen on the Profile tab).
+    public static func notchWidth(matchedOctaves: Double, minimumOctaves: Double) -> Double {
+        max(minimumOctaves, max(matchedOctaves, 0) + widthMarginOctaves)
+    }
+
+    /// The bands removed for notches at `centersHz`, all `widthOctaves` wide, lowest first.
     public static func bands(centersHz: [Double], widthOctaves: Double, maxBands: Int = maxNotchesPerEar) -> [(low: Double, high: Double)] {
+        bands(edges: centersHz.filter { $0 > 0 }.map { PitchMatching.notchEdges(centerHz: $0, widthOctaves: widthOctaves) }, maxBands: maxBands)
+    }
+
+    /// The bands removed for `notches`, each sized from its own matched width, lowest first.
+    public static func bands(notches: [NotchSpec], minimumWidthOctaves: Double, maxBands: Int = maxNotchesPerEar) -> [(low: Double, high: Double)] {
+        bands(edges: notches.filter { $0.centerHz > 0 }.map {
+            PitchMatching.notchEdges(centerHz: $0.centerHz, widthOctaves: notchWidth(matchedOctaves: $0.matchedWidthOctaves, minimumOctaves: minimumWidthOctaves))
+        }, maxBands: maxBands)
+    }
+
+    /// Notches that overlap merge into one wider band. If more than `maxBands` remain, the two closest
+    /// neighbors are joined until they fit, so every pitch stays notched.
+    static func bands(edges: [(low: Double, high: Double)], maxBands: Int) -> [(low: Double, high: Double)] {
         var merged: [(low: Double, high: Double)] = []
-        for center in centersHz.filter({ $0 > 0 }).sorted() {
-            let band = PitchMatching.notchEdges(centerHz: center, widthOctaves: widthOctaves)
+        for band in edges.sorted(by: { $0.low < $1.low }) {
             if let last = merged.last, band.low <= last.high {
                 merged[merged.count - 1].high = max(last.high, band.high)
             } else {
@@ -46,6 +66,13 @@ public enum NotchDesign {
     /// Notches for every pitch in one ear, in series. Empty when there are no pitches.
     public static func forTinnitus(centersHz: [Double], widthOctaves: Double, sampleRate: Double) -> [BiquadCoefficients] {
         bands(centersHz: centersHz, widthOctaves: widthOctaves).flatMap {
+            bandStop(lowHz: $0.low, highHz: $0.high, sampleRate: sampleRate)
+        }
+    }
+
+    /// Notches for every match in one ear, each as wide as its match plus the margin. Empty when there are none.
+    public static func forTinnitus(notches: [NotchSpec], minimumWidthOctaves: Double, sampleRate: Double) -> [BiquadCoefficients] {
+        bands(notches: notches, minimumWidthOctaves: minimumWidthOctaves).flatMap {
             bandStop(lowHz: $0.low, highHz: $0.high, sampleRate: sampleRate)
         }
     }
@@ -94,6 +121,17 @@ public enum NotchDesign {
             a1: 2 * (a0 - kk) / norm,
             a2: (kk - a1 * k + a0) / norm
         )
+    }
+}
+
+/// One notch to cut: the matched pitch and the width of the matched sound (0 for a pure tone).
+public struct NotchSpec: Hashable, Sendable {
+    public var centerHz: Double
+    public var matchedWidthOctaves: Double
+
+    public init(centerHz: Double, matchedWidthOctaves: Double = 0) {
+        self.centerHz = centerHz
+        self.matchedWidthOctaves = matchedWidthOctaves
     }
 }
 

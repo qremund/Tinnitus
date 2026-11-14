@@ -2,12 +2,31 @@ import Foundation
 import Observation
 import SwiftUI
 import TinnitusCore
+import UniformTypeIdentifiers
 
 /// Saved matching sessions, newest first, stored as JSON in Application Support.
+///
+/// A file that can't be read is set aside with a dated name rather than overwritten, and the problem
+/// is shown, so a bug or a future format change can never quietly wipe saved matches.
+@MainActor
 @Observable
 final class ProfileStore {
     private(set) var profiles: [TinnitusProfile] = []
     @ObservationIgnored private let fileURL: URL
+
+    /// Set when a saved file couldn't be read at launch. Explains where the original was kept.
+    var loadProblem: String?
+
+    /// The matches removed by the last delete, so it can be undone.
+    struct RecentDeletion {
+        let id = UUID()
+        var matches: [(index: Int, match: TinnitusProfile)]
+        /// For each profile, the matches it lost and where they were in its list.
+        var memberships: [UUID: [(index: Int, id: UUID)]]
+        var title: String
+    }
+
+    private(set) var recentDeletion: RecentDeletion?
 
     @ObservationIgnored private let matchProfilesURL: URL
 
@@ -128,14 +147,55 @@ final class ProfileStore {
         save()
     }
 
+    /// Deletes matches and takes them out of every profile. `undoDelete()` puts everything back.
     func delete(at offsets: IndexSet) {
-        let removed = Set(offsets.map { profiles[$0].id })
+        let removedMatches = offsets.sorted().map { (index: $0, match: profiles[$0]) }
+        let removed = Set(removedMatches.map(\.match.id))
+        var memberships: [UUID: [(index: Int, id: UUID)]] = [:]
+        for profile in matchProfiles {
+            let lost = profile.matchIDs.enumerated().filter { removed.contains($0.element) }.map { (index: $0.offset, id: $0.element) }
+            if !lost.isEmpty { memberships[profile.id] = lost }
+        }
+        let title = removedMatches.count == 1 ? Format.matchTitle(removedMatches[0].match) : "\(removedMatches.count) matches"
+        recentDeletion = RecentDeletion(matches: removedMatches, memberships: memberships, title: title)
+
         profiles.remove(atOffsets: offsets)
         for index in matchProfiles.indices {
             matchProfiles[index].matchIDs.removeAll { removed.contains($0) }
         }
         save()
         saveMatchProfiles()
+    }
+
+    /// Profiles a delete of these matches would change, for the confirmation.
+    func profilesContaining(_ offsets: IndexSet) -> [MatchProfile] {
+        let ids = Set(offsets.map { profiles[$0].id })
+        return matchProfiles.filter { profile in profile.matchIDs.contains { ids.contains($0) } }
+    }
+
+    func undoDelete() {
+        guard let deletion = recentDeletion else { return }
+        recentDeletion = nil
+        for (index, match) in deletion.matches.sorted(by: { $0.index < $1.index }) where !profiles.contains(where: { $0.id == match.id }) {
+            profiles.insert(match, at: min(index, profiles.count))
+        }
+        for (profileID, lost) in deletion.memberships {
+            guard let p = matchProfiles.firstIndex(where: { $0.id == profileID }) else { continue }
+            for (index, id) in lost.sorted(by: { $0.index < $1.index }) where !matchProfiles[p].matchIDs.contains(id) {
+                matchProfiles[p].matchIDs.insert(id, at: min(index, matchProfiles[p].matchIDs.count))
+            }
+        }
+        save()
+        saveMatchProfiles()
+    }
+
+    func clearRecentDeletion() {
+        recentDeletion = nil
+    }
+
+    /// Everything saved, for the Export button.
+    var export: MatchExport {
+        MatchExport(archive: MatchArchive.Export(matches: profiles, profiles: matchProfiles))
     }
 
     func rename(_ id: UUID, to name: String) {
@@ -149,25 +209,40 @@ final class ProfileStore {
     var nextMatchName: String { "Match \(profiles.count + 1)" }
 
     private func load() {
-        guard let data = try? Data(contentsOf: fileURL) else { return }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        profiles = (try? decoder.decode([TinnitusProfile].self, from: data)) ?? []
+        profiles = read([TinnitusProfile].self, from: fileURL, what: "saved matches") ?? []
     }
 
     private func loadMatchProfiles() {
-        guard let data = try? Data(contentsOf: matchProfilesURL) else { return }
-        matchProfiles = (try? JSONDecoder().decode([MatchProfile].self, from: data)) ?? []
+        matchProfiles = read([MatchProfile].self, from: matchProfilesURL, what: "profiles") ?? []
+    }
+
+    /// Reads a saved list. A file that exists but can't be read is moved aside so the next save can't
+    /// overwrite it, and `loadProblem` says where it went.
+    private func read<Item: Codable>(_ type: [Item].Type, from url: URL, what: String) -> [Item]? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        do {
+            return try MatchArchive.decode(Item.self, from: data)
+        } catch {
+            let stamp = Int(Date().timeIntervalSince1970)
+            let backup = url.deletingPathExtension().appendingPathExtension("unreadable-\(stamp).json")
+            try? FileManager.default.moveItem(at: url, to: backup)
+            let reason = (error as? MatchArchive.ReadError).map { _ in "It was saved by a newer version of the app." } ?? "The file may be damaged."
+            let note = "Your \(what) couldn't be read. \(reason) The original was kept as \(backup.lastPathComponent) in the app's files, and nothing was deleted."
+            loadProblem = [loadProblem, note].compactMap { $0 }.joined(separator: "\n\n")
+            return nil
+        }
     }
 
     private func saveMatchProfiles() {
+        write(matchProfiles, to: matchProfilesURL, what: "profiles")
+    }
+
+    private func write<Item: Codable>(_ items: [Item], to url: URL, what: String) {
         do {
-            try FileManager.default.createDirectory(at: matchProfilesURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(matchProfiles).write(to: matchProfilesURL, options: .atomic)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try MatchArchive.encode(items).write(to: url, options: .atomic)
         } catch {
-            print("Saving match profiles failed: \(error)")
+            loadProblem = "Saving your \(what) failed: \(error.localizedDescription)"
         }
     }
 
@@ -189,14 +264,21 @@ final class ProfileStore {
     }
 
     private func save() {
-        do {
-            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(profiles).write(to: fileURL, options: .atomic)
-        } catch {
-            print("Saving profiles failed: \(error)")
+        write(profiles, to: fileURL, what: "saved matches")
+    }
+}
+
+/// The Export button's file: every match and profile, as JSON.
+struct MatchExport: Transferable {
+    let archive: MatchArchive.Export
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(exportedContentType: .json) { export in
+            let day = export.archive.exportedAt.formatted(.iso8601.year().month().day())
+            let name = "Tinnitus matches \(day).json"
+            let url = FileManager.default.temporaryDirectory.appending(path: name)
+            try MatchArchive.encoder().encode(export.archive).write(to: url, options: .atomic)
+            return SentTransferredFile(url)
         }
     }
 }

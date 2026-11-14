@@ -8,7 +8,7 @@ let package = Package(
         .library(name: "TinnitusCore", targets: ["TinnitusCore"]),
     ],
     targets: [
-        .target(name: "TinnitusCore"),
+        .target(name: "TinnitusCore", swiftSettings: [.enableExperimentalFeature("StrictConcurrency")]),
         .testTarget(name: "TinnitusCoreTests", dependencies: ["TinnitusCore"]),
     ]
 )

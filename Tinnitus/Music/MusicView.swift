@@ -71,7 +71,7 @@ struct MusicView: View {
             }
             .fileImporter(isPresented: $showingFiles, allowedContentTypes: [.audio], allowsMultipleSelection: true) { result in
                 switch result {
-                case .success(let urls): importMessage = library.importFiles(urls)
+                case .success(let urls): Task { importMessage = await library.importFiles(urls) }
                 case .failure(let error): importMessage = error.localizedDescription
                 }
             }
@@ -115,14 +115,14 @@ struct MusicView: View {
         }
         let removed: String
         if pitches.isSameInBothEars {
-            removed = "Songs play with \(Format.earNotch(pitches.left, widthOctaves: notchWidthOctaves)) removed in both ears."
+            removed = "Songs play with \(Format.earNotch(pitches.leftNotches, minimumWidthOctaves: notchWidthOctaves)) removed in both ears."
         } else {
-            func ear(_ name: String, _ centers: [Double]) -> String {
-                centers.isEmpty ? "\(name) ear: unfiltered." : "\(name) ear: \(Format.earNotch(centers, widthOctaves: notchWidthOctaves)) removed."
+            func ear(_ name: String, _ notches: [NotchSpec]) -> String {
+                notches.isEmpty ? "\(name) ear: unfiltered." : "\(name) ear: \(Format.earNotch(notches, minimumWidthOctaves: notchWidthOctaves)) removed."
             }
-            removed = "\(ear("Left", pitches.left)) \(ear("Right", pitches.right))"
+            removed = "\(ear("Left", pitches.leftNotches)) \(ear("Right", pitches.rightNotches)) Mono songs get both ears' notches."
         }
-        return "\(removed) Each song takes a few seconds to prepare the first time."
+        return removed
     }
 
     private func openMusicLibrary() {
@@ -198,21 +198,15 @@ private struct NowPlayingBar: View {
                 .disabled(!player.hasNotch)
             }
 
-            if player.isPreparing {
-                ProgressView(value: player.prepareProgress) {
-                    Text("Filtering this song…").font(.caption)
+            TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                ProgressView(value: min(player.currentTime, player.duration), total: max(player.duration, 1))
+                HStack {
+                    Text(Format.duration(player.currentTime))
+                    Spacer()
+                    Text(Format.duration(player.duration))
                 }
-            } else {
-                TimelineView(.periodic(from: .now, by: 0.5)) { _ in
-                    ProgressView(value: min(player.currentTime, player.duration), total: max(player.duration, 1))
-                    HStack {
-                        Text(Format.duration(player.currentTime))
-                        Spacer()
-                        Text(Format.duration(player.duration))
-                    }
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                }
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
             }
 
             HStack(spacing: 40) {
@@ -220,7 +214,7 @@ private struct NowPlayingBar: View {
                     Image(systemName: "backward.fill")
                 }
                 Button(action: player.togglePlayback) {
-                    Image(systemName: player.isPlaying || player.isPreparing ? "pause.fill" : "play.fill")
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                         .font(.title)
                 }
                 Button(action: player.next) {

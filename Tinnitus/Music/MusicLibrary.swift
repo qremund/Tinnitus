@@ -5,7 +5,6 @@ import Observation
 /// Where imported songs and their notched copies live.
 enum MusicFiles {
     static let folder = URL.documentsDirectory.appending(path: "Music", directoryHint: .isDirectory)
-    static let cacheFolder = URL.cachesDirectory.appending(path: "Filtered", directoryHint: .isDirectory)
     static let indexURL = folder.appending(path: "library.json")
 }
 
@@ -32,25 +31,34 @@ final class MusicLibrary {
         load()
     }
 
-    /// Copies audio files picked in the Files app. Returns a message about anything that was skipped.
-    func importFiles(_ urls: [URL]) -> String? {
+    /// Copies audio files picked in the Files app, off the main thread so large files don't freeze the
+    /// screen. Returns a message about anything that was skipped.
+    func importFiles(_ urls: [URL]) async -> String? {
+        isImporting = true
+        defer { isImporting = false }
         var failed: [String] = []
         for url in urls {
-            let accessing = url.startAccessingSecurityScopedResource()
-            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
             let id = UUID()
             let fileName = "\(id.uuidString).\(url.pathExtension.isEmpty ? "audio" : url.pathExtension.lowercased())"
-            let destination = MusicFiles.folder.appending(path: fileName)
-            do {
-                try FileManager.default.copyItem(at: url, to: destination)
-                let duration = try Self.playableDuration(of: destination)
+            let copied = await Task.detached(priority: .userInitiated) { () -> TimeInterval? in
+                let accessing = url.startAccessingSecurityScopedResource()
+                defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+                let destination = MusicFiles.folder.appending(path: fileName)
+                do {
+                    try FileManager.default.copyItem(at: url, to: destination)
+                    return try Self.playableDuration(of: destination)
+                } catch {
+                    try? FileManager.default.removeItem(at: destination)
+                    return nil
+                }
+            }.value
+            if let duration = copied {
                 tracks.append(Track(id: id, title: url.deletingPathExtension().lastPathComponent, artist: nil, fileName: fileName, duration: duration))
-            } catch {
-                try? FileManager.default.removeItem(at: destination)
+                save()
+            } else {
                 failed.append(url.lastPathComponent)
             }
         }
-        save()
         guard !failed.isEmpty else { return nil }
         return "Couldn't import \(failed.joined(separator: ", ")). The file may be copy protected or in a format iPhone can't decode."
     }
@@ -69,14 +77,19 @@ final class MusicLibrary {
             let id = UUID()
             let fileName = "\(id.uuidString).m4a"
             let destination = MusicFiles.folder.appending(path: fileName)
-            guard let export = AVAssetExportSession(asset: AVURLAsset(url: assetURL), presetName: AVAssetExportPresetAppleM4A) else {
-                skipped.append(title)
-                continue
+            // Copy the song as it is when possible, which keeps its quality. Re-encode only if needed.
+            var duration: TimeInterval?
+            for preset in [AVAssetExportPresetPassthrough, AVAssetExportPresetAppleM4A] where duration == nil {
+                try? FileManager.default.removeItem(at: destination)
+                guard let export = AVAssetExportSession(asset: AVURLAsset(url: assetURL), presetName: preset) else { continue }
+                export.outputURL = destination
+                export.outputFileType = .m4a
+                await export.export()
+                if export.status == .completed {
+                    duration = await Task.detached { try? Self.playableDuration(of: destination) }.value
+                }
             }
-            export.outputURL = destination
-            export.outputFileType = .m4a
-            await export.export()
-            guard export.status == .completed, let duration = try? Self.playableDuration(of: destination) else {
+            guard let duration else {
                 try? FileManager.default.removeItem(at: destination)
                 skipped.append(title)
                 continue
@@ -100,7 +113,7 @@ final class MusicLibrary {
     }
 
     /// Opening the file with AVAudioFile proves we can decode it, which also rules out DRM.
-    private static func playableDuration(of url: URL) throws -> TimeInterval {
+    private nonisolated static func playableDuration(of url: URL) throws -> TimeInterval {
         let file = try AVAudioFile(forReading: url)
         let rate = file.processingFormat.sampleRate
         guard file.length > 0, rate > 0 else { throw CocoaError(.fileReadCorruptFile) }

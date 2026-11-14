@@ -30,6 +30,9 @@ public struct BiquadCoefficients: Equatable, Sendable {
         )
     }
 
+    /// Passes audio through unchanged.
+    public static let identity = BiquadCoefficients(b0: 1, b1: 0, b2: 0, a1: 0, a2: 0)
+
     /// Magnitude response in dB at `frequencyHz`.
     public func magnitudeDB(atHz frequencyHz: Double, sampleRate: Double) -> Double {
         let w = 2 * Double.pi * frequencyHz / sampleRate
@@ -100,13 +103,82 @@ public struct BiquadCascade {
     }
 
     /// Output variance for unit-variance white noise input: the sum of the squared impulse response.
-    public func whiteNoisePowerGain(sampleCount: Int = 1 << 15) -> Double {
-        var fresh = BiquadCascade(sections.map(\.coefficients))
-        var sum = 0.0
-        for n in 0..<sampleCount {
-            let y = fresh.process(n == 0 ? 1 : 0)
-            sum += y * y
+    /// Computed from the coefficients, so it costs a few thousand operations at most instead of running
+    /// the filter for as many samples as a narrow band takes to ring out.
+    public func whiteNoisePowerGain() -> Double {
+        BiquadCascade.whiteNoisePowerGain(of: sections.map(\.coefficients))
+    }
+
+    /// Exact white noise power gain of biquads in series. Unstable filters return infinity.
+    ///
+    /// Works on the sections' own state equations, x' = Ax + Bu and y = Cx + Du. The gain is
+    /// D^2 + C P C^T, where P is the sum of A^k B B^T (A^T)^k, and each pass below doubles the number of
+    /// terms in P. Multiplying the sections into one polynomial would be shorter, but its coefficients
+    /// lose the poles of a narrow, low band to rounding, which puts the answer off by percents.
+    public static func whiteNoisePowerGain(of coefficients: [BiquadCoefficients]) -> Double {
+        // Inside the stability triangle, every section's poles are inside the unit circle.
+        guard coefficients.allSatisfy({ abs($0.a2) < 1 && abs($0.a1) < 1 + $0.a2 }) else { return .infinity }
+
+        let n = 2 * coefficients.count
+        var a = [[Double]](repeating: [Double](repeating: 0, count: n), count: n)
+        var b = [Double](repeating: 0, count: n)
+        var c = [Double](repeating: 0, count: n) // Together with d, gives the output of the sections so far.
+        var d = 1.0
+        for (section, q) in coefficients.enumerated() {
+            let i = 2 * section
+            // Transposed direct form II, with the section's output substituted into its state updates.
+            let p1 = q.b1 - q.a1 * q.b0
+            let p2 = q.b2 - q.a2 * q.b0
+            for j in 0..<n {
+                a[i][j] = p1 * c[j]
+                a[i + 1][j] = p2 * c[j]
+            }
+            a[i][i] -= q.a1
+            a[i][i + 1] += 1
+            a[i + 1][i] -= q.a2
+            b[i] = p1 * d
+            b[i + 1] = p2 * d
+            for j in 0..<n {
+                c[j] *= q.b0
+            }
+            c[i] += 1
+            d *= q.b0
         }
-        return sum
+
+        var p = b.map { x in b.map { x * $0 } }
+        var power = a
+        for _ in 0..<64 where power.joined().contains(where: { abs($0) > 1e-20 }) {
+            let added = multiply(multiply(power, p), transpose(power))
+            for i in 0..<n {
+                for j in 0..<n {
+                    p[i][j] += added[i][j]
+                }
+            }
+            power = multiply(power, power)
+        }
+
+        var gain = d * d
+        for i in 0..<n {
+            for j in 0..<n {
+                gain += c[i] * p[i][j] * c[j]
+            }
+        }
+        return gain
+    }
+
+    private static func multiply(_ x: [[Double]], _ y: [[Double]]) -> [[Double]] {
+        var result = x.map { $0.map { _ in 0.0 } }
+        for i in x.indices {
+            for k in y.indices {
+                for j in y[k].indices {
+                    result[i][j] += x[i][k] * y[k][j]
+                }
+            }
+        }
+        return result
+    }
+
+    private static func transpose(_ x: [[Double]]) -> [[Double]] {
+        x.indices.map { j in x.indices.map { i in x[i][j] } }
     }
 }

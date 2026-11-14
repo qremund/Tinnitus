@@ -23,11 +23,22 @@ enum Format {
     }
 
     /// One ear's notches for summaries, like "2.12 kHz to 4.24 kHz and 5.66 kHz to 6.73 kHz",
-    /// with overlapping notches merged. "unfiltered" when that ear has no match.
-    static func earNotch(_ centersHz: [Double], widthOctaves: Double) -> String {
-        let bands = NotchDesign.bands(centersHz: centersHz, widthOctaves: widthOctaves)
+    /// with overlapping notches merged. Each notch is its match's width plus a margin, and at least
+    /// `minimumWidthOctaves`. "unfiltered" when that ear has no match.
+    static func earNotch(_ notches: [NotchSpec], minimumWidthOctaves: Double) -> String {
+        let bands = NotchDesign.bands(notches: notches, minimumWidthOctaves: minimumWidthOctaves)
         guard !bands.isEmpty else { return "unfiltered" }
         return bands.map { "\(frequency($0.low)) to \(frequency($0.high))" }.formatted(.list(type: .and))
+    }
+
+    /// The notches for these matches, as in `earNotch(_:minimumWidthOctaves:)`.
+    static func earNotch(matches: [TinnitusProfile], minimumWidthOctaves: Double) -> String {
+        earNotch(matches.map { NotchSpec(centerHz: $0.centerFrequencyHz, matchedWidthOctaves: $0.bandwidthOctaves) }, minimumWidthOctaves: minimumWidthOctaves)
+    }
+
+    /// A phone volume as a percentage, like "70%".
+    static func volume(_ fraction: Double) -> String {
+        "\(Int((fraction * 100).rounded()))%"
     }
 
     /// Pitches as a short list, like "3.10 kHz and 6.20 kHz".

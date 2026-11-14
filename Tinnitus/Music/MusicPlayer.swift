@@ -1,23 +1,26 @@
 import AVFoundation
 import MediaPlayer
+import MediaToolbox
 import Observation
 import TinnitusCore
 
-/// Plays imported songs, with the notched copy running in sync so the filter can be toggled with a crossfade.
+/// Plays imported songs through the tinnitus notch, filtering live as they play.
+///
+/// Each song goes through an audio processing tap, which hands its audio to `LiveNotchProcessor` just
+/// before it reaches the speakers. Songs start at once, profile changes and the notch toggle take
+/// effect within a fraction of a second, and nothing is stored apart from the songs themselves.
+@MainActor
 @Observable
 final class MusicPlayer {
     private(set) var queue: [Track] = []
     private(set) var currentIndex: Int?
     private(set) var isPlaying = false
-    /// True while the notched copy of the current song is being rendered.
-    private(set) var isPreparing = false
-    private(set) var prepareProgress = 0.0
     private(set) var errorMessage: String?
     private(set) var hasNotch = false
 
     var filterEnabled = true {
         didSet {
-            crossfade()
+            pushSettings()
             updateNowPlaying()
         }
     }
@@ -25,49 +28,40 @@ final class MusicPlayer {
     /// Called before playback starts, so other players can stop.
     @ObservationIgnored var onWillPlay: (() -> Void)?
 
-    static let crossfadeDuration: TimeInterval = 0.3
+    /// How long after a pause the audio session is released.
+    static let releaseDelay: TimeInterval = 0.5
 
-    @ObservationIgnored private let engine = AVAudioEngine()
-    @ObservationIgnored private let dryNode = AVAudioPlayerNode()
-    @ObservationIgnored private let wetNode = AVAudioPlayerNode()
-    @ObservationIgnored private let renderer = NotchRenderer()
-    @ObservationIgnored private var dryFile: AVAudioFile?
-    @ObservationIgnored private var wetFile: AVAudioFile?
-    @ObservationIgnored private var renderJob: NotchRenderer.Job?
-    @ObservationIgnored private var prefetchJob: NotchRenderer.Job?
-    /// File frame where the currently scheduled segment starts.
-    @ObservationIgnored private var segmentStart: AVAudioFramePosition = 0
-    /// Position to resume from while paused.
-    @ObservationIgnored private var pausedFrame: AVAudioFramePosition = 0
-    /// Bumped whenever scheduled audio is thrown away, so stale completion callbacks are ignored.
+    @ObservationIgnored private let player = AVPlayer()
+    /// The current song's notch. Each song gets its own, attached to its audio tap.
+    @ObservationIgnored private var processor: LiveNotchProcessor?
+    @ObservationIgnored private var settings = LiveNotchProcessor.Settings()
+    /// Bumped whenever a new song loads, so a slow load that finishes late is ignored.
     @ObservationIgnored private var generation = 0
-    @ObservationIgnored private var notchPitches = EarPitches.none
-    @ObservationIgnored private var notchWidthOctaves = 1.0
-    @ObservationIgnored private var wetMix: Float = 1
-    @ObservationIgnored private var fadeTimer: Timer?
+    @ObservationIgnored private var interruptedWhilePlaying = false
+    @ObservationIgnored private var release: DispatchWorkItem?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
+    @ObservationIgnored private var endObserver: NSObjectProtocol?
 
     init() {
-        engine.attach(dryNode)
-        engine.attach(wetNode)
+        player.automaticallyWaitsToMinimizeStalling = false
         let center = NotificationCenter.default
         observers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] note in
-            if let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
-               AVAudioSession.RouteChangeReason(rawValue: raw) == .oldDeviceUnavailable {
-                self?.pause()
+            let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt).flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
+            MainActor.assumeIsolated {
+                // Headphones unplugged: pause instead of switching to the speaker.
+                if reason == .oldDeviceUnavailable { self?.pause() }
             }
         })
         observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
-            self?.handleInterruption(note)
+            let type = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt).flatMap(AVAudioSession.InterruptionType.init(rawValue:))
+            let options = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt).map(AVAudioSession.InterruptionOptions.init(rawValue:)) ?? []
+            MainActor.assumeIsolated {
+                self?.handleInterruption(type: type, options: options)
+            }
         })
-        observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
-            self?.handleConfigurationChange()
-        })
-    }
-
-    deinit {
-        for observer in observers {
-            NotificationCenter.default.removeObserver(observer)
+        // Earlier versions kept pre-filtered copies of songs here. They are no longer used.
+        Task.detached(priority: .background) {
+            try? FileManager.default.removeItem(at: URL.cachesDirectory.appending(path: "Filtered", directoryHint: .isDirectory))
         }
     }
 
@@ -79,22 +73,23 @@ final class MusicPlayer {
 
     /// Playback position in seconds. Not observed, so views poll it with a TimelineView.
     var currentTime: TimeInterval {
-        guard let file = dryFile else { return 0 }
-        return Double(currentFrame) / file.processingFormat.sampleRate
+        let seconds = player.currentTime().seconds
+        return seconds.isFinite ? max(seconds, 0) : 0
     }
 
     // MARK: Notch
 
-    /// Sets each ear's notch from the saved profiles. An ear without a pitch plays unfiltered.
+    /// Sets each ear's notches. An ear without a pitch plays unfiltered. Takes effect immediately.
     func setNotch(pitches: EarPitches, widthOctaves: Double) {
-        guard pitches != notchPitches || widthOctaves != notchWidthOctaves else { return }
-        notchPitches = pitches
-        notchWidthOctaves = widthOctaves
+        settings.pitches = pitches
+        settings.minimumWidthOctaves = widthOctaves
         hasNotch = !pitches.isEmpty
-        // The rendered copy no longer matches, so reload the song where it is.
-        if let index = currentIndex {
-            load(index: index, from: currentFrame, autoplay: isPlaying)
-        }
+        pushSettings()
+    }
+
+    private func pushSettings() {
+        settings.enabled = filterEnabled
+        processor?.update(settings)
     }
 
     // MARK: Transport
@@ -102,29 +97,24 @@ final class MusicPlayer {
     func play(_ tracks: [Track], startAt index: Int) {
         guard tracks.indices.contains(index) else { return }
         queue = tracks
-        load(index: index, from: 0, autoplay: true)
+        load(index: index, autoplay: true)
     }
 
     func play() {
         guard let index = currentIndex else { return }
-        // Reload if the filtered copy never finished, so the song doesn't start unfiltered.
-        if dryFile == nil || isPreparing || (hasNotch && wetFile == nil) {
-            load(index: index, from: pausedFrame, autoplay: true)
+        if player.currentItem == nil {
+            load(index: index, autoplay: true)
         } else {
-            start(from: pausedFrame)
+            start()
         }
     }
 
     func pause() {
-        guard isPlaying || isPreparing else { return }
-        pausedFrame = currentFrame
-        generation += 1
-        renderJob?.cancel()
-        isPreparing = false
-        dryNode.stop()
-        wetNode.stop()
+        guard isPlaying else { return }
+        player.pause()
         isPlaying = false
         updateNowPlaying()
+        scheduleRelease()
     }
 
     func togglePlayback() {
@@ -134,7 +124,7 @@ final class MusicPlayer {
     func next() {
         guard let index = currentIndex else { return }
         if index + 1 < queue.count {
-            load(index: index + 1, from: 0, autoplay: isPlaying || isPreparing)
+            load(index: index + 1, autoplay: isPlaying)
         } else {
             stopAtEnd()
         }
@@ -146,24 +136,21 @@ final class MusicPlayer {
         if currentTime > 3 || index == 0 {
             seek(to: 0)
         } else {
-            load(index: index - 1, from: 0, autoplay: isPlaying || isPreparing)
+            load(index: index - 1, autoplay: isPlaying)
         }
     }
 
     func seek(to seconds: TimeInterval) {
-        guard let file = dryFile else { return }
-        let frame = AVAudioFramePosition(max(0, seconds) * file.processingFormat.sampleRate)
-        pausedFrame = min(frame, file.length)
-        if isPlaying {
-            start(from: pausedFrame)
-        } else {
-            updateNowPlaying()
+        let time = CMTime(seconds: max(0, seconds), preferredTimescale: 600)
+        player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.updateNowPlaying() }
+            }
         }
     }
 
     /// Drops a deleted song from the queue, stopping it if it is playing.
     func remove(_ track: Track) {
-        renderer.removeCache(for: track)
         guard let removed = queue.firstIndex(where: { $0.id == track.id }) else { return }
         if removed == currentIndex {
             stop()
@@ -179,152 +166,80 @@ final class MusicPlayer {
     func stop() {
         pause()
         generation += 1
-        renderJob?.cancel()
-        dryFile = nil
-        wetFile = nil
+        player.replaceCurrentItem(with: nil)
+        processor = nil
         currentIndex = nil
-        pausedFrame = 0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        AudioSessionCoordinator.deactivate(.music)
     }
 
     // MARK: Loading
 
-    private func load(index: Int, from frame: AVAudioFramePosition, autoplay: Bool) {
+    private func load(index: Int, autoplay: Bool) {
         guard queue.indices.contains(index) else { return }
         if autoplay { onWillPlay?() }
         generation += 1
-        renderJob?.cancel()
-        dryNode.stop()
-        wetNode.stop()
+        let loadGeneration = generation
+        player.pause()
         isPlaying = false
-        isPreparing = false
         errorMessage = nil
         currentIndex = index
-        pausedFrame = frame
-        wetFile = nil
 
         let track = queue[index]
-        do {
-            dryFile = try AVAudioFile(forReading: track.url)
-        } catch {
-            dryFile = nil
-            errorMessage = "Couldn't open \(track.title)."
-            return
-        }
+        let asset = AVURLAsset(url: track.url)
+        let item = AVPlayerItem(asset: asset)
+        let processor = LiveNotchProcessor(settings: settings)
+        self.processor = processor
 
-        guard hasNotch else {
-            if autoplay { start(from: frame) } else { updateNowPlaying() }
-            return
-        }
-
-        isPreparing = autoplay
-        prepareProgress = 0
-        let loadGeneration = generation
-        renderJob = renderer.render(track, pitches: notchPitches, widthOctaves: notchWidthOctaves, progress: { [weak self] fraction in
-            guard let self, self.generation == loadGeneration else { return }
-            self.prepareProgress = fraction
-        }, completion: { [weak self] result in
-            guard let self, self.generation == loadGeneration else { return }
-            self.isPreparing = false
-            switch result {
-            case .success(let url):
-                self.wetFile = try? AVAudioFile(forReading: url)
-                if self.wetFile == nil {
-                    self.errorMessage = "The filtered copy couldn't be opened, so this song plays unfiltered."
-                }
-            case .failure:
-                self.errorMessage = "Filtering failed, so this song plays unfiltered."
+        Task {
+            let audioTrack: AVAssetTrack?
+            do {
+                audioTrack = try await asset.loadTracks(withMediaType: .audio).first
+            } catch {
+                guard self.generation == loadGeneration else { return }
+                self.errorMessage = "Couldn't open \(track.title)."
+                return
             }
-            if autoplay { self.start(from: self.pausedFrame) } else { self.updateNowPlaying() }
-            self.prefetchNext()
-        })
-    }
-
-    /// Renders the next song in the background so it starts without a wait.
-    private func prefetchNext() {
-        guard let index = currentIndex, index + 1 < queue.count, hasNotch else { return }
-        prefetchJob = renderer.render(queue[index + 1], pitches: notchPitches, widthOctaves: notchWidthOctaves) { _ in }
-    }
-
-    // MARK: Engine
-
-    private func start(from frame: AVAudioFramePosition) {
-        guard let dry = dryFile else { return }
-        onWillPlay?()
-        generation += 1
-        let playGeneration = generation
-        dryNode.stop()
-        wetNode.stop()
-
-        let remaining = dry.length - frame
-        guard remaining > 0 else {
-            trackDidFinish()
-            return
+            guard self.generation == loadGeneration else { return }
+            if let audioTrack, let mix = Self.makeAudioMix(track: audioTrack, processor: processor) {
+                item.audioMix = mix
+            } else {
+                self.errorMessage = "The notch couldn't be attached, so this song plays unfiltered."
+            }
+            self.player.replaceCurrentItem(with: item)
+            self.observeEnd(of: item)
+            if autoplay { self.start() } else { self.updateNowPlaying() }
         }
+    }
+
+    private func observeEnd(of item: AVPlayerItem) {
+        if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+        endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.trackDidFinish() }
+        }
+    }
+
+    private func start() {
+        guard player.currentItem != nil else { return }
+        onWillPlay?()
+        release?.cancel()
+        release = nil
         do {
-            try startEngine(format: dry.processingFormat, wetFormat: wetFile?.processingFormat ?? dry.processingFormat)
+            try AudioSessionCoordinator.activate(.music)
         } catch {
             errorMessage = "Audio could not start: \(error.localizedDescription)"
             return
         }
-
-        segmentStart = frame
-        dryNode.scheduleSegment(dry, startingFrame: frame, frameCount: AVAudioFrameCount(remaining), at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-            DispatchQueue.main.async {
-                guard let self, self.generation == playGeneration else { return }
-                // A stopped engine also fires this callback. Only advance when the song really reached its end.
-                let tolerance = AVAudioFramePosition(dry.processingFormat.sampleRate)
-                guard self.currentFrame >= dry.length - tolerance else { return }
-                self.trackDidFinish()
-            }
-        }
-        if let wet = wetFile, wet.length > frame {
-            wetNode.scheduleSegment(wet, startingFrame: frame, frameCount: AVAudioFrameCount(min(remaining, wet.length - frame)), at: nil)
-        }
-
-        wetMix = targetWetMix
-        applyMix()
-        // A shared start time keeps the dry and notched copies sample aligned.
-        let startTime = AVAudioTime(hostTime: mach_absolute_time() + AVAudioTime.hostTime(forSeconds: 0.05))
-        dryNode.play(at: startTime)
-        if wetFile != nil {
-            wetNode.play(at: startTime)
-        }
+        player.play()
         isPlaying = true
         claimRemoteControls()
         updateNowPlaying()
     }
 
-    private func startEngine(format: AVAudioFormat, wetFormat: AVAudioFormat) throws {
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playback, mode: .default)
-        try session.setActive(true)
-        // Songs can differ in sample rate and channel count, so connect with each song's own format.
-        // A mono song with a different notch in each ear has a stereo filtered copy.
-        if dryNode.outputFormat(forBus: 0) != format || engine.outputConnectionPoints(for: dryNode, outputBus: 0).isEmpty {
-            engine.connect(dryNode, to: engine.mainMixerNode, format: format)
-        }
-        if wetNode.outputFormat(forBus: 0) != wetFormat || engine.outputConnectionPoints(for: wetNode, outputBus: 0).isEmpty {
-            engine.connect(wetNode, to: engine.mainMixerNode, format: wetFormat)
-        }
-        if !engine.isRunning {
-            engine.prepare()
-            try engine.start()
-        }
-    }
-
-    private var currentFrame: AVAudioFramePosition {
-        guard isPlaying,
-              let nodeTime = dryNode.lastRenderTime,
-              let playerTime = dryNode.playerTime(forNodeTime: nodeTime) else { return pausedFrame }
-        let frame = segmentStart + max(playerTime.sampleTime, 0)
-        return min(frame, dryFile?.length ?? frame)
-    }
-
     private func trackDidFinish() {
         guard let index = currentIndex else { return }
         if index + 1 < queue.count {
-            load(index: index + 1, from: 0, autoplay: true)
+            load(index: index + 1, autoplay: true)
         } else {
             stopAtEnd()
         }
@@ -332,71 +247,78 @@ final class MusicPlayer {
 
     private func stopAtEnd() {
         pause()
-        pausedFrame = 0
-        updateNowPlaying()
+        seek(to: 0)
     }
 
-    private func handleConfigurationChange() {
-        // The engine stops itself when the output changes. Pick up where we were.
-        guard isPlaying else { return }
-        let frame = currentFrame
-        isPlaying = false
-        pausedFrame = frame
-        start(from: frame)
+    /// Releases the audio session once playback has stayed paused, so other apps can resume.
+    private func scheduleRelease() {
+        release?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, !self.isPlaying else { return }
+                AudioSessionCoordinator.deactivate(.music)
+            }
+        }
+        release = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.releaseDelay, execute: work)
     }
 
-    private func handleInterruption(_ note: Notification) {
-        guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
-              let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+    private func handleInterruption(type: AVAudioSession.InterruptionType?, options: AVAudioSession.InterruptionOptions) {
         switch type {
         case .began:
-            if isPlaying {
-                pausedFrame = currentFrame
-                generation += 1
-                isPlaying = false
-                updateNowPlaying()
-            }
+            interruptedWhilePlaying = isPlaying
+            guard isPlaying else { return }
+            // The system has already paused the player.
+            isPlaying = false
+            updateNowPlaying()
         case .ended:
-            let options = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt).map { AVAudioSession.InterruptionOptions(rawValue: $0) } ?? []
-            if options.contains(.shouldResume), currentIndex != nil, dryFile != nil {
-                start(from: pausedFrame)
+            if interruptedWhilePlaying && options.contains(.shouldResume) {
+                start()
             }
-        @unknown default:
+            interruptedWhilePlaying = false
+        default:
             break
         }
     }
 
-    // MARK: Filter crossfade
+    // MARK: Audio tap
 
-    private var targetWetMix: Float {
-        filterEnabled && wetFile != nil ? 1 : 0
-    }
-
-    private func applyMix() {
-        // The two copies are nearly identical outside the notch, so a linear fade keeps the level steady.
-        wetNode.volume = wetMix
-        dryNode.volume = 1 - wetMix
-    }
-
-    private func crossfade() {
-        fadeTimer?.invalidate()
-        let target = targetWetMix
-        guard isPlaying else {
-            wetMix = target
-            applyMix()
-            return
-        }
-        let step = Float(1.0 / 60 / Self.crossfadeDuration)
-        fadeTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
-            guard let self else { return timer.invalidate() }
-            if abs(self.wetMix - target) <= step {
-                self.wetMix = target
-                timer.invalidate()
-            } else {
-                self.wetMix += self.wetMix < target ? step : -step
+    /// An audio mix that sends the song through `processor`. Nil if the tap couldn't be made.
+    private nonisolated static func makeAudioMix(track: AVAssetTrack, processor: LiveNotchProcessor) -> AVAudioMix? {
+        let context = TapContext(processor: processor)
+        let clientInfo = Unmanaged.passRetained(context).toOpaque()
+        var callbacks = MTAudioProcessingTapCallbacks(
+            version: kMTAudioProcessingTapCallbacksVersion_0,
+            clientInfo: clientInfo,
+            init: { _, clientInfo, storageOut in
+                storageOut.pointee = clientInfo
+            },
+            finalize: { tap in
+                Unmanaged<TapContext>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).release()
+            },
+            prepare: { tap, _, format in
+                Unmanaged<TapContext>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue().prepare(format.pointee)
+            },
+            unprepare: { tap in
+                Unmanaged<TapContext>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue().unprepare()
+            },
+            process: { tap, frameCount, _, bufferList, frameCountOut, flagsOut in
+                guard MTAudioProcessingTapGetSourceAudio(tap, frameCount, bufferList, flagsOut, nil, frameCountOut) == noErr else { return }
+                Unmanaged<TapContext>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
+                    .process(bufferList, frameCount: Int(frameCountOut.pointee))
             }
-            self.applyMix()
+        )
+        var tap: MTAudioProcessingTap?
+        let status = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PostEffects, &tap)
+        guard status == noErr, let tap else {
+            Unmanaged<TapContext>.fromOpaque(clientInfo).release()
+            return nil
         }
+        let parameters = AVMutableAudioMixInputParameters(track: track)
+        parameters.audioTapProcessor = tap
+        let mix = AVMutableAudioMix()
+        mix.inputParameters = [parameters]
+        return mix
     }
 
     // MARK: Lock screen
@@ -423,5 +345,55 @@ final class MusicPlayer {
         let notchNote = hasNotch && filterEnabled ? "Tinnitus notch on" : "Tinnitus notch off"
         info[MPMediaItemPropertyArtist] = [track.artist, notchNote].compactMap { $0 }.joined(separator: " · ")
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+}
+
+/// What the audio tap's callbacks need. They run on the player's own threads, never the main one.
+private final class TapContext: @unchecked Sendable {
+    let processor: LiveNotchProcessor
+    private var isUsable = false
+    private var isInterleaved = false
+    private var channelCount = 0
+
+    init(processor: LiveNotchProcessor) {
+        self.processor = processor
+    }
+
+    func prepare(_ format: AudioStreamBasicDescription) {
+        // The tap normally delivers 32-bit float. Anything else passes through unfiltered.
+        isUsable = format.mFormatID == kAudioFormatLinearPCM
+            && format.mFormatFlags & kAudioFormatFlagIsFloat != 0
+            && format.mBitsPerChannel == 32
+            && format.mChannelsPerFrame > 0
+        isInterleaved = format.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0
+        channelCount = Int(format.mChannelsPerFrame)
+        if isUsable {
+            processor.prepare(sampleRate: format.mSampleRate, channelCount: channelCount)
+        }
+    }
+
+    func unprepare() {
+        isUsable = false
+        processor.unprepare()
+    }
+
+    func process(_ bufferList: UnsafeMutablePointer<AudioBufferList>, frameCount: Int) {
+        guard isUsable, frameCount > 0 else { return }
+        let buffers = UnsafeMutableAudioBufferListPointer(bufferList)
+        processor.beginBlock()
+        if isInterleaved {
+            if buffers.count > 0, let data = buffers[0].mData?.assumingMemoryBound(to: Float.self) {
+                for channel in 0..<channelCount {
+                    processor.process(data + channel, frameCount: frameCount, channel: channel, stride: channelCount)
+                }
+            }
+        } else {
+            for channel in 0..<min(buffers.count, channelCount) {
+                if let data = buffers[channel].mData?.assumingMemoryBound(to: Float.self) {
+                    processor.process(data, frameCount: frameCount, channel: channel)
+                }
+            }
+        }
+        processor.endBlock(frameCount: frameCount)
     }
 }
